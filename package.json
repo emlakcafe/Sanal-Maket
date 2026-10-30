@@ -14,7 +14,9 @@
     "react-dom": "^19.0.0",
     "three": "^0.179.1",
     "postprocessing": "^6.39.5",
-    "three-mesh-bvh": "^0.9.17"
+    "three-mesh-bvh": "^0.9.17",
+    "@turf/buffer": "^7.2.0",
+    "@turf/helpers": "^7.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

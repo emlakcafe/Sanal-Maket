@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import styles from "./ProjectShowcase.module.css";
+import { FloorPlan3D, Interior360, RenderPresentation } from "@/components/ShowcaseModes";
 
 type BlockId = "A" | "B" | "C" | "D" | "E";
 type UnitStatus = "available" | "reserved" | "sold";
@@ -453,17 +454,21 @@ export default function ProjectShowcase() {
           </div>
 
           <div className={styles.viewerStage}>
-            {mode === "site" ? (
+            {mode === "site" && (
               <ProjectScene
                 selectedId={selected.id}
                 units={units}
                 onSelect={selectUnit}
                 focusNonce={focusNonce}
               />
-            ) : (
+            )}
+            {mode === "render" && <RenderPresentation unitId={selected.id} type={selected.type} />}
+            {mode === "floor" && <FloorPlan3D type={selected.type} />}
+            {mode === "inside" && <Interior360 unitId={selected.id} type={selected.type} />}
+            {mode === "satellite" && (
               <div className={styles.placeholder}>
-                <b>{mode === "render" ? "Mimari Render" : mode === "satellite" ? "Uydu + 3D" : mode === "floor" ? "3D Kat Planı" : "Daire İçi 360"}</b>
-                <span>Bu sekmenin gerçek proje veri bağlantısı sonraki geliştirme aşamasında aktif edilecek.</span>
+                <b>Uydu + 3D</b>
+                <span>TKGM/MEGSİS parsel geometrisi ve gerçek uydu katmanı bu sekmeye bağlanacak.</span>
               </div>
             )}
           </div>

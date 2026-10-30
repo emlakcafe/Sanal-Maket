@@ -7,6 +7,9 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
+import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "three-mesh-bvh";
 import styles from "./ProjectShowcase.module.css";
 import { FloorPlan3D, Interior360, RenderPresentation } from "@/components/ShowcaseModes";
 
@@ -33,6 +36,9 @@ const statusLabel: Record<UnitStatus, string> = {
 };
 
 const BLOCKS: BlockId[] = ["A", "B", "C", "D", "E"];
+
+Object.assign(THREE.BufferGeometry.prototype, { computeBoundsTree, disposeBoundsTree });
+Object.assign(THREE.Mesh.prototype, { raycast: acceleratedRaycast });
 
 function buildUnits(): Unit[] {
   const units: Unit[] = [];
@@ -156,7 +162,8 @@ function ProjectScene({
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.98;
+    renderer.toneMappingExposure = 1.08;
+    renderer.shadowMap.autoUpdate = true;
     mount.appendChild(renderer.domElement);
 
     const composer = new EffectComposer(renderer);
@@ -165,9 +172,14 @@ function ProjectScene({
     gtao.updateGtaoMaterial({ radius: 2.0, thickness: 1.1, distanceExponent: 1.5, distanceFallOff: 0.8, scale: 1, samples: 8 });
     gtao.updatePdMaterial({ radius: 5, samples: 8 });
     gtao.blendIntensity = 0.7;
+    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.16, 0.28, 0.92);
+    const smaa = new SMAAPass(1, 1);
+    const output = new OutputPass();
     composer.addPass(beauty);
     composer.addPass(gtao);
-    composer.addPass(new OutputPass());
+    composer.addPass(bloom);
+    composer.addPass(smaa);
+    composer.addPass(output);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -176,7 +188,9 @@ function ProjectScene({
     controls.maxDistance = 48;
     controls.maxPolarAngle = Math.PI / 2.06;
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x72816c, 2.1));
+    scene.add(new THREE.HemisphereLight(0xf7fbff, 0x64735f, 1.45));
+    const ambient = new THREE.AmbientLight(0xffffff, 0.36);
+    scene.add(ambient);
 
     const siteGroup = new THREE.Group();
     scene.add(siteGroup);
@@ -219,10 +233,12 @@ function ProjectScene({
       controls.maxDistance = Math.max(48, maxDim * 2);
     }
 
-    const sun = new THREE.DirectionalLight(0xffffff, 3.8);
+    const sun = new THREE.DirectionalLight(0xfff1d6, 4.8);
     sun.position.set(18, 28, 13);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(4096, 4096);
+    sun.shadow.bias = -0.00008;
+    sun.shadow.normalBias = 0.02;
     sun.shadow.camera.left = -30;
     sun.shadow.camera.right = 30;
     sun.shadow.camera.top = 30;
@@ -303,17 +319,29 @@ function ProjectScene({
     const unitMesh = new Map<string, THREE.Mesh>();
     const worldUnitPosition = new Map<string, THREE.Vector3>();
 
-    const facadeMaterial = new THREE.MeshStandardMaterial({ color: 0xe8e1d3, roughness: 0.72 });
-    const slabMaterial = new THREE.MeshStandardMaterial({ color: 0xd8d2c6, roughness: 0.88 });
-    const glassMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0xa7c8d4,
-      transparent: true,
-      opacity: 0.75,
-      roughness: 0.17,
-      metalness: 0.08
+    const facadeMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xe9e4da, roughness: 0.58, metalness: 0.02, clearcoat: 0.08, clearcoatRoughness: 0.72
     });
-    const woodMaterial = new THREE.MeshStandardMaterial({ color: 0x8e6748, roughness: 0.78 });
-    const balconyMaterial = new THREE.MeshStandardMaterial({ color: 0xe1ded7, roughness: 0.82 });
+    const slabMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xd4d0c8, roughness: 0.72, metalness: 0.01
+    });
+    const glassMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0x9bc5d8,
+      roughness: 0.06,
+      metalness: 0.02,
+      transmission: 0.68,
+      thickness: 0.18,
+      ior: 1.45,
+      transparent: true,
+      opacity: 0.72,
+      envMapIntensity: 1.35
+    });
+    const woodMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0x7d5538, roughness: 0.48, metalness: 0.01, clearcoat: 0.12
+    });
+    const balconyMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xe7e3dc, roughness: 0.62, metalness: 0.01
+    });
 
     for (const block of BLOCKS) {
       const origin = blockPositions[block];
@@ -385,6 +413,7 @@ function ProjectScene({
           panel.position.set(x, y, z);
           panel.userData.unitId = unit.id;
           root.add(panel);
+          panel.geometry.computeBoundsTree();
           clickable.push(panel);
           unitMesh.set(unit.id, panel);
 
@@ -450,7 +479,8 @@ function ProjectScene({
 
     if (focusNonce > 0) focusSelected();
 
-    const raycaster = new THREE.Raycaster();
+    const raycaster = new THREE.Raycaster() as THREE.Raycaster & { firstHitOnly?: boolean };
+    raycaster.firstHitOnly = true;
     const pointer = new THREE.Vector2();
 
     const onClick = (event: MouseEvent) => {
@@ -468,6 +498,8 @@ function ProjectScene({
       const h = Math.max(420, mount.clientHeight);
       renderer.setSize(w, h, true);
       composer.setSize(w, h);
+      bloom.setSize(w, h);
+      smaa.setSize(w, h);
       gtao.setSize(Math.max(1, Math.round(w * 0.8)), Math.max(1, Math.round(h * 0.8)));
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
@@ -493,6 +525,9 @@ function ProjectScene({
       controls.dispose();
       beauty.dispose();
       gtao.dispose();
+      bloom.dispose();
+      smaa.dispose();
+      output.dispose();
       composer.dispose();
       renderer.dispose();
       mount.innerHTML = "";

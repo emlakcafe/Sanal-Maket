@@ -6,6 +6,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { ExtractedPolygon, FloorplanExtraction } from "@/lib/geometry/types";
 
 type ViewPreset = "iso" | "top" | "front" | "right";
+type RenderMode = "technical" | "presentation";
 
 type LayerState = {
   walls: boolean;
@@ -110,6 +111,7 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
   const [preset, setPreset] = useState<ViewPreset>("iso");
   const [sectionMode, setSectionMode] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [renderMode, setRenderMode] = useState<RenderMode>("presentation");
 
   const counts = useMemo(() => ({
     walls: data?.polygons.wall?.length ?? 0,
@@ -122,7 +124,8 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
 
     const el = host.current;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b1220);
+    scene.background = new THREE.Color(renderMode === "presentation" ? 0xd9e2ea : 0x0b1220);
+    scene.fog = renderMode === "presentation" ? new THREE.Fog(0xd9e2ea, 28, 70) : null;
 
     const camera = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, 0.1, 300);
 
@@ -132,6 +135,8 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = renderMode === "presentation" ? 1.15 : 1;
     el.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -148,18 +153,18 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
     controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
     controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x203047, 2.35));
-    const key = new THREE.DirectionalLight(0xffffff, 2.7);
+    scene.add(new THREE.HemisphereLight(0xffffff, renderMode === "presentation" ? 0x8d9baa : 0x203047, renderMode === "presentation" ? 2.8 : 2.35));
+    const key = new THREE.DirectionalLight(renderMode === "presentation" ? 0xfff4df : 0xffffff, renderMode === "presentation" ? 3.4 : 2.7);
     key.position.set(8, 14, 9);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
     scene.add(key);
 
-    const fill = new THREE.DirectionalLight(0x9fc7ff, 0.75);
+    const fill = new THREE.DirectionalLight(0x9fc7ff, renderMode === "presentation" ? 1.1 : 0.75);
     fill.position.set(-6, 7, -5);
     scene.add(fill);
 
-    const grid = new THREE.GridHelper(24, 48, 0x37506e, 0x1c2a3c);
+    const grid = new THREE.GridHelper(24, 48, renderMode === "presentation" ? 0xaeb9c4 : 0x37506e, renderMode === "presentation" ? 0xc8d0d8 : 0x1c2a3c);
     scene.add(grid);
 
     const modelRoot = new THREE.Group();
@@ -181,28 +186,34 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
 
       const slab = new THREE.Mesh(
         new THREE.BoxGeometry(contentW * scale + 0.35, 0.12, contentH * scale + 0.35),
-        new THREE.MeshStandardMaterial({ color: 0x687689, roughness: 0.94 })
+        new THREE.MeshStandardMaterial({
+          color: renderMode === "presentation" ? 0xc8b99d : 0x687689,
+          roughness: renderMode === "presentation" ? 0.72 : 0.94,
+          metalness: 0.02
+        })
       );
       slab.position.y = 0.06;
       slab.receiveShadow = true;
       slabGroup.add(slab);
 
       const wallMaterial = new THREE.MeshStandardMaterial({
-        color: 0xe8edf3,
-        roughness: 0.76,
+        color: renderMode === "presentation" ? 0xf3efe8 : 0xe8edf3,
+        roughness: renderMode === "presentation" ? 0.58 : 0.76,
+        metalness: 0.01,
         side: THREE.DoubleSide
       });
       const doorMaterial = new THREE.MeshStandardMaterial({
-        color: 0xa56d43,
-        roughness: 0.68,
+        color: renderMode === "presentation" ? 0x8b5a3c : 0xa56d43,
+        roughness: renderMode === "presentation" ? 0.48 : 0.68,
+        metalness: 0.02,
         side: THREE.DoubleSide
       });
       const windowMaterial = new THREE.MeshPhysicalMaterial({
-        color: 0x72c8ff,
-        roughness: 0.13,
-        transmission: 0.2,
+        color: renderMode === "presentation" ? 0x9ed7ee : 0x72c8ff,
+        roughness: renderMode === "presentation" ? 0.08 : 0.13,
+        transmission: renderMode === "presentation" ? 0.55 : 0.2,
         transparent: true,
-        opacity: 0.78,
+        opacity: renderMode === "presentation" ? 0.62 : 0.78,
         side: THREE.DoubleSide
       });
 
@@ -222,6 +233,17 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
       );
       guide.position.y = 0.06;
       slabGroup.add(guide);
+    }
+
+    if (renderMode === "presentation") {
+      const ground = new THREE.Mesh(
+        new THREE.CircleGeometry(18, 96),
+        new THREE.MeshStandardMaterial({ color: 0xb8c2c8, roughness: 1 })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -0.01;
+      ground.receiveShadow = true;
+      scene.add(ground);
     }
 
     const box = new THREE.Box3().setFromObject(modelRoot);
@@ -282,7 +304,7 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
       sceneRefs.current = null;
       if (renderer.domElement.parentNode === el) el.removeChild(renderer.domElement);
     };
-  }, [data]);
+  }, [data, renderMode]);
 
   useEffect(() => {
     const refs = sceneRefs.current;
@@ -342,6 +364,10 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
   return (
     <div className="viewerWorkspace">
       <div className="viewerToolbar">
+        <div className="toolbarGroup">
+          <button className={renderMode === "presentation" ? "viewerTool active" : "viewerTool"} onClick={() => setRenderMode("presentation")}>Sunum</button>
+          <button className={renderMode === "technical" ? "viewerTool active" : "viewerTool"} onClick={() => setRenderMode("technical")}>Teknik</button>
+        </div>
         <div className="toolbarGroup">
           <button className={preset === "iso" ? "viewerTool active" : "viewerTool"} onClick={() => setPreset("iso")}>İzometrik</button>
           <button className={preset === "top" ? "viewerTool active" : "viewerTool"} onClick={() => setPreset("top")}>Üst</button>

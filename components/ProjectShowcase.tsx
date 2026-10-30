@@ -413,7 +413,7 @@ function ProjectScene({
           panel.position.set(x, y, z);
           panel.userData.unitId = unit.id;
           root.add(panel);
-          panel.geometry.computeBoundsTree();
+          (panel.geometry as THREE.BufferGeometry & { computeBoundsTree: () => void }).computeBoundsTree();
           clickable.push(panel);
           unitMesh.set(unit.id, panel);
 

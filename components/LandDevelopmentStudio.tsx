@@ -1,9 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { buildScenarios, calculatePolygonAreaSqm, type ParcelPoint, type ProjectScenario, type ZoningInput } from "@/lib/planning/parcelPlanner";
 import styles from "./LandDevelopmentStudio.module.css";
 import { calculateEnvelopeAreaSqm, createBuildableEnvelope } from "@/lib/zoning/buildableEnvelope";
+
+const SatelliteParcelMap = dynamic(() => import("@/components/SatelliteParcelMap"), { ssr: false });
 
 function parseKml(text:string): ParcelPoint[] {
   const xml = new DOMParser().parseFromString(text,"application/xml");
@@ -104,6 +107,19 @@ export default function LandDevelopmentStudio() {
             <div>{s.blocks} blok/yapı · {s.estimatedUnits} bağımsız bölüm · {s.parking} otopark</div>
           </button>)}
         </div>
+
+        {points.length>2&&<div className={styles.satelliteCard}>
+          <div className={styles.envelopeHead}>
+            <div><span>UYDU + PARSEL</span><h3>Gerçek uydu görüntüsü üzerinde parsel</h3></div>
+            <div><b>19x</b><span>yakınlaştırma</span></div>
+          </div>
+          <SatelliteParcelMap parcel={points} buildable={envelope.valid?envelope.points:[]} />
+          <div className={styles.legend}>
+            <span><i className={styles.redDot}/>TKGM parsel sınırı</span>
+            <span><i className={styles.blueDot}/>Yapılaşabilir alan</span>
+          </div>
+          <p className={styles.warning}>Uydu katmanı Esri World Imagery üzerinden gelir; gerçek zamanlı canlı kamera değildir, sağlayıcının güncel uydu/hava görüntüsü katmanıdır.</p>
+        </div>}
 
         {points.length>2&&<div className={styles.envelopeCard}>
           <div className={styles.envelopeHead}>

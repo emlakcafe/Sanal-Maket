@@ -428,6 +428,8 @@ export default function ProjectShowcase() {
   const [mode, setMode] = useState<ViewMode>("site");
   const [blockFilter, setBlockFilter] = useState<"ALL" | BlockId>("ALL");
   const [focusNonce, setFocusNonce] = useState(0);
+  const [parcelInfo, setParcelInfo] = useState<{lat:number;lon:number;points:number;name:string} | null>(null);
+  const [parcelMessage, setParcelMessage] = useState("");
 
   const selectUnit = useCallback((id: string) => setSelectedId(id), []);
   const selected = units.find(u => u.id === selectedId) || units[0];
@@ -444,6 +446,38 @@ export default function ProjectShowcase() {
   function focusSelectedUnit() {
     setMode("site");
     setFocusNonce(v => v + 1);
+  }
+
+  async function importParcelKml(file: File | null) {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const xml = new DOMParser().parseFromString(text, "application/xml");
+      const coordNodes = Array.from(xml.getElementsByTagName("coordinates"));
+      const raw = coordNodes.map(n => n.textContent || "").join(" ");
+      const points = raw
+        .trim()
+        .split(/\s+/)
+        .map(token => token.split(","))
+        .filter(parts => parts.length >= 2)
+        .map(parts => [Number(parts[0]), Number(parts[1])] as [number, number])
+        .filter(([lon, lat]) => Number.isFinite(lon) && Number.isFinite(lat));
+
+      if (points.length < 3) throw new Error("KML içinde geçerli parsel koordinatı bulunamadı.");
+
+      const centroid = points.reduce(
+        (acc, [lon, lat]) => ({ lon: acc.lon + lon, lat: acc.lat + lat }),
+        { lon: 0, lat: 0 }
+      );
+      centroid.lon /= points.length;
+      centroid.lat /= points.length;
+
+      setParcelInfo({ lat: centroid.lat, lon: centroid.lon, points: points.length, name: file.name });
+      setParcelMessage(`TKGM KML yüklendi: ${points.length} koordinat okundu.`);
+      setMode("satellite");
+    } catch (error) {
+      setParcelMessage(error instanceof Error ? error.message : String(error));
+    }
   }
 
   return (
@@ -502,7 +536,32 @@ export default function ProjectShowcase() {
             {mode === "satellite" && (
               <div className={styles.placeholder}>
                 <b>Uydu + 3D</b>
-                <span>TKGM/MEGSİS parsel geometrisi ve gerçek uydu katmanı bu sekmeye bağlanacak.</span>
+                {parcelInfo ? (
+                  <>
+                    <span>{parcelInfo.name} · {parcelInfo.points} koordinat</span>
+                    <span>Merkez: {parcelInfo.lat.toFixed(6)}, {parcelInfo.lon.toFixed(6)}</span>
+                    <iframe
+                      title="Parsel uydu görünümü"
+                      src={`https://www.google.com/maps?q=${parcelInfo.lat},${parcelInfo.lon}&z=19&t=k&output=embed`}
+                      style={{width:"94%",height:"78%",border:0,borderRadius:12}}
+                      loading="lazy"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <span>Gerçek parsel için TKGM Parsel Sorgu'dan KML indirip aşağıdaki düğmeyle yükleyin.</span>
+                    <label className={styles.outlineButton} style={{cursor:"pointer"}}>
+                      TKGM KML Yükle
+                      <input
+                        type="file"
+                        accept=".kml,application/vnd.google-earth.kml+xml"
+                        style={{display:"none"}}
+                        onChange={e => importParcelKml(e.target.files?.[0] || null)}
+                      />
+                    </label>
+                    {parcelMessage && <span>{parcelMessage}</span>}
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -554,7 +613,18 @@ export default function ProjectShowcase() {
         <div><span>Ada / Parsel</span><b>382 / 1</b></div>
         <div><span>Tapu alanı</span><b>19.095,17 m²</b></div>
         <div><span>Pafta</span><b>G22c07c2a</b></div>
-        <button className={styles.outlineButton} onClick={() => setMode("satellite")}>Uydu görünümüne geç</button>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button className={styles.outlineButton} onClick={() => setMode("satellite")}>Uydu görünümüne geç</button>
+          <label className={styles.outlineButton} style={{cursor:"pointer"}}>
+            TKGM KML Yükle
+            <input
+              type="file"
+              accept=".kml,application/vnd.google-earth.kml+xml"
+              style={{display:"none"}}
+              onChange={e => importParcelKml(e.target.files?.[0] || null)}
+            />
+          </label>
+        </div>
       </section>
 
       <section className={styles.inventory}>

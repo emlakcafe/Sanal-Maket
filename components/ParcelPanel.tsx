@@ -30,6 +30,38 @@ export default function ParcelPanel({
     [value.city, value.district, value.neighborhood]
   );
 
+  async function locateParcel() {
+    if (!value.city || !value.district || !value.neighborhood || !value.block || !value.parcel) {
+      setMessage("İl, ilçe, mahalle/köy, ada ve parsel bilgilerini eksiksiz girin.");
+      return;
+    }
+    setLoading(true);
+    setMessage("");
+    try {
+      const params = new URLSearchParams({
+        city: value.city,
+        district: value.district,
+        neighborhood: value.neighborhood,
+        block: value.block,
+        parcel: value.parcel
+      });
+      const response = await fetch("/api/tkgm/parcel?" + params.toString(), { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "TKGM/MEGSİS parsel sorgusu başarısız.");
+      onChange({
+        ...value,
+        lat: payload.centroid.lat,
+        lon: payload.centroid.lon,
+        displayName: `${value.city} / ${value.district} / ${value.neighborhood} / Ada ${value.block} / Parsel ${value.parcel}`
+      });
+      setMessage("Parsel MEGSİS servisinden bulundu. Uydu görünümü gerçek parsel merkezine getirildi.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function locateRegion() {
     if (!value.city || !value.district) {
       setMessage("İl ve ilçe girin.");
@@ -81,11 +113,14 @@ export default function ParcelPanel({
         <input placeholder="Mahalle / Köy" value={value.neighborhood} onChange={e => onChange({ ...value, neighborhood: e.target.value })} />
         <input placeholder="Ada" value={value.block} onChange={e => onChange({ ...value, block: e.target.value })} />
         <input placeholder="Parsel" value={value.parcel} onChange={e => onChange({ ...value, parcel: e.target.value })} />
-        <button className="secondaryButton" onClick={locateRegion} disabled={loading}>
-          {loading ? "Bölge aranıyor..." : "Uydu Bölgesini Göster"}
+        <button className="primaryButton" onClick={locateParcel} disabled={loading}>
+          {loading ? "Parsel sorgulanıyor..." : "MEGSİS'ten Parseli Getir"}
         </button>
-        <button className="primaryButton" onClick={openTkgm}>
-          TKGM'de Parseli Doğrula
+        <button className="secondaryButton" onClick={locateRegion} disabled={loading}>
+          {loading ? "Bölge aranıyor..." : "Sadece Bölgeyi Göster"}
+        </button>
+        <button className="secondaryButton" onClick={openTkgm}>
+          TKGM Parsel Sorgu'yu Aç
         </button>
       </div>
 
@@ -107,7 +142,7 @@ export default function ParcelPanel({
       </div>
 
       <div className="tkgmNote">
-        <strong>Önemli:</strong> Bu ekrandaki Google uydu görünümü ada/parsel sınırı değildir. Kesin parsel konumu ve sınırı resmi TKGM Parsel Sorgu üzerinden doğrulanmalıdır. Emlak Cafe içine otomatik parsel geometrisi getirmek için ayrıca yetkili MEGSİS/TKGM servis erişimi bağlanacaktır.
+        <strong>Entegrasyon:</strong> “MEGSİS'ten Parseli Getir” yetkili TKGM/MEGSİS WFS servisinden gerçek parsel geometrisini sorgular. Servis erişimi yapılandırılmamışsa sistem yaklaşık konum göstermeye çalışmaz; açıkça yetki eksikliğini bildirir.
       </div>
     </section>
   );

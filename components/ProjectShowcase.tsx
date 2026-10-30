@@ -101,7 +101,7 @@ function ProjectScene({
     scene.fog = new THREE.Fog(0xdbe9f2, 42, 85);
 
     const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 500);
-    camera.position.set(24, 15, 30);
+    camera.position.set(18, 11.5, 22);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -114,9 +114,9 @@ function ProjectScene({
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.target.set(0, 4.3, 0);
-    controls.minDistance = 10;
-    controls.maxDistance = 65;
+    controls.target.set(0, 4.8, -1.5);
+    controls.minDistance = 8;
+    controls.maxDistance = 48;
     controls.maxPolarAngle = Math.PI / 2.06;
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x72816c, 2.1));
@@ -185,19 +185,20 @@ function ProjectScene({
     scene.add(courtLines);
 
     const blockPositions: Record<BlockId, THREE.Vector3> = {
-      A: new THREE.Vector3(-13, 0, 7),
-      B: new THREE.Vector3(13, 0, 7),
-      C: new THREE.Vector3(-13, 0, -7),
-      D: new THREE.Vector3(13, 0, -7),
-      E: new THREE.Vector3(0, 0, -14)
+      A: new THREE.Vector3(-11.5, 0, 6.8),
+      B: new THREE.Vector3(11.5, 0, 6.8),
+      C: new THREE.Vector3(-11.5, 0, -7.0),
+      D: new THREE.Vector3(11.5, 0, -7.0),
+      E: new THREE.Vector3(0, 0, -13.8)
     };
 
+    // Her blok ana cephesini ortak avluya çevirir.
     const blockFacing: Record<BlockId, number> = {
-      A: 0,
-      B: Math.PI,
-      C: 0,
-      D: Math.PI,
-      E: Math.PI
+      A: 2.05,
+      B: -2.05,
+      C: 1.02,
+      D: -1.02,
+      E: 0
     };
 
     const clickable: THREE.Mesh[] = [];
@@ -232,6 +233,18 @@ function ProjectScene({
       const penthouseCap = new THREE.Mesh(new THREE.BoxGeometry(8.1, 0.35, 5), slabMaterial);
       penthouseCap.position.y = 11.45;
       root.add(penthouseCap);
+
+      // Kör cepheyi kırmak için yan cephe pencere bantları.
+      for (const side of [-1, 1]) {
+        for (let floor = 1; floor <= 4; floor++) {
+          const sideWindow = new THREE.Mesh(
+            new THREE.BoxGeometry(0.12, 1.45, 1.15),
+            glassMaterial
+          );
+          sideWindow.position.set(side * 4.34, (floor - 1) * 2.75 + 1.45, 0.15);
+          root.add(sideWindow);
+        }
+      }
 
       for (let floor = 1; floor <= 4; floor++) {
         const y = (floor - 1) * 2.75 + 1.45;
@@ -317,7 +330,9 @@ function ProjectScene({
     const focusSelected = () => {
       const target = worldUnitPosition.get(selectedId);
       if (!target) return;
-      const offset = new THREE.Vector3(8, 5.2, 9);
+      const block = selectedId.slice(0, 1) as BlockId;
+      const frontDir = new THREE.Vector3(Math.sin(blockFacing[block]), 0, Math.cos(blockFacing[block]));
+      const offset = frontDir.multiplyScalar(8.5).add(new THREE.Vector3(0, 4.4, 0));
       controls.target.copy(target);
       camera.position.copy(target.clone().add(offset));
       controls.update();

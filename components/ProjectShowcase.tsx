@@ -84,16 +84,55 @@ function createTree() {
   return tree;
 }
 
+type ParcelFit = {
+  points: Array<[number, number]>;
+  centroid: { lat: number; lon: number };
+};
+
+function parcelToLocalMeters(parcel: ParcelFit) {
+  const lat0 = parcel.centroid.lat * Math.PI / 180;
+  const metersPerLon = 111320 * Math.cos(lat0);
+  const metersPerLat = 110540;
+  const pts = parcel.points.map(([lon, lat]) => new THREE.Vector2(
+    (lon - parcel.centroid.lon) * metersPerLon,
+    (lat - parcel.centroid.lat) * metersPerLat
+  ));
+
+  let xx = 0, zz = 0, xz = 0;
+  for (const p of pts) {
+    xx += p.x * p.x;
+    zz += p.y * p.y;
+    xz += p.x * p.y;
+  }
+  const angle = 0.5 * Math.atan2(2 * xz, xx - zz);
+  const ca = Math.cos(-angle), sa = Math.sin(-angle);
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of pts) {
+    const x = p.x * ca - p.y * sa;
+    const z = p.x * sa + p.y * ca;
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+  }
+  return {
+    pts,
+    angle,
+    width: Math.max(1, maxX - minX),
+    depth: Math.max(1, maxZ - minZ)
+  };
+}
+
 function ProjectScene({
   selectedId,
   units,
   onSelect,
-  focusNonce
+  focusNonce,
+  parcel
 }: {
   selectedId: string;
   units: Unit[];
   onSelect: (id: string) => void;
   focusNonce: number;
+  parcel?: ParcelFit | null;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
@@ -139,6 +178,47 @@ function ProjectScene({
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x72816c, 2.1));
 
+    const siteGroup = new THREE.Group();
+    scene.add(siteGroup);
+
+    let parcelFit: ReturnType<typeof parcelToLocalMeters> | null = null;
+    if (parcel?.points?.length && parcel.points.length >= 3) {
+      parcelFit = parcelToLocalMeters(parcel);
+      const SITE_W = 48;
+      const SITE_D = 34;
+      const fitScale = Math.min(parcelFit.width / SITE_W, parcelFit.depth / SITE_D) * 0.82;
+      siteGroup.scale.setScalar(Math.max(0.05, fitScale));
+      siteGroup.rotation.y = -parcelFit.angle;
+
+      const boundary = parcelFit.pts.map(p => new THREE.Vector3(p.x, 0.08, -p.y));
+      boundary.push(boundary[0].clone());
+      const boundaryGeometry = new THREE.BufferGeometry().setFromPoints(boundary);
+      const boundaryLine = new THREE.Line(
+        boundaryGeometry,
+        new THREE.LineBasicMaterial({ color: 0xff3b30 })
+      );
+      scene.add(boundaryLine);
+
+      const shape = new THREE.Shape();
+      parcelFit.pts.forEach((p, i) => {
+        if (i === 0) shape.moveTo(p.x, -p.y);
+        else shape.lineTo(p.x, -p.y);
+      });
+      shape.closePath();
+      const parcelMesh = new THREE.Mesh(
+        new THREE.ShapeGeometry(shape),
+        new THREE.MeshBasicMaterial({ color: 0x7fb26a, transparent: true, opacity: 0.18, side: THREE.DoubleSide })
+      );
+      parcelMesh.rotation.x = -Math.PI / 2;
+      parcelMesh.position.y = 0.02;
+      scene.add(parcelMesh);
+
+      const maxDim = Math.max(parcelFit.width, parcelFit.depth);
+      camera.position.set(maxDim * 0.7, Math.max(12, maxDim * 0.45), maxDim * 0.85);
+      controls.target.set(0, 4, 0);
+      controls.maxDistance = Math.max(48, maxDim * 2);
+    }
+
     const sun = new THREE.DirectionalLight(0xffffff, 3.8);
     sun.position.set(18, 28, 13);
     sun.castShadow = true;
@@ -155,25 +235,25 @@ function ProjectScene({
     );
     site.position.y = -0.28;
     site.receiveShadow = true;
-    scene.add(site);
+    siteGroup.add(site);
 
     const pathMaterial = new THREE.MeshStandardMaterial({ color: 0xc2bdb1, roughness: 0.95 });
     const centralPath = new THREE.Mesh(new THREE.BoxGeometry(8.8, 0.12, 27), pathMaterial);
     centralPath.position.y = 0;
     centralPath.receiveShadow = true;
-    scene.add(centralPath);
+    siteGroup.add(centralPath);
 
     const crossPath = new THREE.Mesh(new THREE.BoxGeometry(31, 0.12, 3.4), pathMaterial);
     crossPath.position.set(0, 0.01, -3.8);
     crossPath.receiveShadow = true;
-    scene.add(crossPath);
+    siteGroup.add(crossPath);
 
     const poolShell = new THREE.Mesh(
       new THREE.BoxGeometry(8.8, 0.2, 5.4),
       new THREE.MeshStandardMaterial({ color: 0xd6d2c8, roughness: 0.9 })
     );
     poolShell.position.set(0, 0.08, -8.2);
-    scene.add(poolShell);
+    siteGroup.add(poolShell);
 
     const pool = new THREE.Mesh(
       new THREE.BoxGeometry(8, 0.1, 4.6),
@@ -186,21 +266,21 @@ function ProjectScene({
       })
     );
     pool.position.set(0, 0.2, -8.2);
-    scene.add(pool);
+    siteGroup.add(pool);
 
     const court = new THREE.Mesh(
       new THREE.BoxGeometry(9.2, 0.08, 5.8),
       new THREE.MeshStandardMaterial({ color: 0xb56b48, roughness: 0.9 })
     );
     court.position.set(0, 0.15, 5.8);
-    scene.add(court);
+    siteGroup.add(court);
 
     const courtLines = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(8.7, 0.04, 5.3)),
       new THREE.LineBasicMaterial({ color: 0xf4eee4 })
     );
     courtLines.position.set(0, 0.22, 5.8);
-    scene.add(courtLines);
+    siteGroup.add(courtLines);
 
     const blockPositions: Record<BlockId, THREE.Vector3> = {
       A: new THREE.Vector3(-11.5, 0, 6.8),
@@ -240,7 +320,7 @@ function ProjectScene({
       const root = new THREE.Group();
       root.position.copy(origin);
       root.rotation.y = blockFacing[block];
-      scene.add(root);
+      siteGroup.add(root);
 
       const core = new THREE.Mesh(new THREE.BoxGeometry(8.9, 11.3, 5.6), facadeMaterial);
       core.position.y = 5.65;
@@ -337,7 +417,7 @@ function ProjectScene({
     ] as [number, number][]) {
       const tree = createTree();
       tree.position.set(x, 0, z);
-      scene.add(tree);
+      siteGroup.add(tree);
     }
 
     const updateHighlight = () => {
@@ -417,7 +497,7 @@ function ProjectScene({
       renderer.dispose();
       mount.innerHTML = "";
     };
-  }, [selectedId, units, onSelect, focusNonce]);
+  }, [selectedId, units, onSelect, focusNonce, parcel]);
 
   return <div ref={mountRef} className={styles.scene} />;
 }
@@ -428,7 +508,7 @@ export default function ProjectShowcase() {
   const [mode, setMode] = useState<ViewMode>("site");
   const [blockFilter, setBlockFilter] = useState<"ALL" | BlockId>("ALL");
   const [focusNonce, setFocusNonce] = useState(0);
-  const [parcelInfo, setParcelInfo] = useState<{lat:number;lon:number;points:number;name:string} | null>(null);
+  const [parcelInfo, setParcelInfo] = useState<{lat:number;lon:number;points:number;name:string;boundary:Array<[number,number]>} | null>(null);
   const [parcelMessage, setParcelMessage] = useState("");
 
   const selectUnit = useCallback((id: string) => setSelectedId(id), []);
@@ -472,9 +552,9 @@ export default function ProjectShowcase() {
       centroid.lon /= points.length;
       centroid.lat /= points.length;
 
-      setParcelInfo({ lat: centroid.lat, lon: centroid.lon, points: points.length, name: file.name });
+      setParcelInfo({ lat: centroid.lat, lon: centroid.lon, points: points.length, name: file.name, boundary: points });
       setParcelMessage(`TKGM KML yüklendi: ${points.length} koordinat okundu.`);
-      setMode("satellite");
+      setMode("site");
     } catch (error) {
       setParcelMessage(error instanceof Error ? error.message : String(error));
     }
@@ -528,6 +608,7 @@ export default function ProjectShowcase() {
                 units={units}
                 onSelect={selectUnit}
                 focusNonce={focusNonce}
+                parcel={parcelInfo ? { points: parcelInfo.boundary, centroid: { lat: parcelInfo.lat, lon: parcelInfo.lon } } : null}
               />
             )}
             {mode === "render" && <RenderPresentation unitId={selected.id} type={selected.type} />}
@@ -540,6 +621,7 @@ export default function ProjectShowcase() {
                   <>
                     <span>{parcelInfo.name} · {parcelInfo.points} koordinat</span>
                     <span>Merkez: {parcelInfo.lat.toFixed(6)}, {parcelInfo.lon.toFixed(6)}</span>
+                    <span>3D proje parsel sınırlarına göre otomatik ölçeklendi ve yönlendirildi.</span>
                     <iframe
                       title="Parsel uydu görünümü"
                       src={`https://www.google.com/maps?q=${parcelInfo.lat},${parcelInfo.lon}&z=19&t=k&output=embed`}

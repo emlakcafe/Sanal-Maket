@@ -3,9 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { SSAOPass } from "three/examples/jsm/postprocessing/SSAOPass.js";
 import type { ExtractedPolygon, FloorplanExtraction, Point2D } from "@/lib/geometry/types";
 
 type ViewPreset = "iso" | "top" | "front" | "right";
@@ -21,8 +18,6 @@ type LayerState = {
 
 type SceneRefs = {
   renderer: THREE.WebGLRenderer;
-  composer: EffectComposer;
-  ssao: SSAOPass;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   wallGroup: THREE.Group;
@@ -260,7 +255,6 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
   const [preset, setPreset] = useState<ViewPreset>("iso");
   const [renderMode, setRenderMode] = useState<RenderMode>("presentation");
   const [sectionMode, setSectionMode] = useState(false);
-  const [aoEnabled, setAoEnabled] = useState(true);
   const [shadowsEnabled, setShadowsEnabled] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
 
@@ -447,17 +441,8 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
     if (!Number.isFinite(center.x)) center.set(0, 1, 0);
     const radius = Math.max(size.length() * 0.5, 4);
 
-    const composer = new EffectComposer(renderer);
-    composer.addPass(new RenderPass(scene, camera));
-    const ssao = new SSAOPass(scene, camera, el.clientWidth, el.clientHeight);
-    ssao.kernelRadius = presentation ? 12 : 7;
-    ssao.minDistance = 0.001;
-    ssao.maxDistance = presentation ? 0.12 : 0.07;
-    ssao.enabled = aoEnabled;
-    composer.addPass(ssao);
-
     sceneRefs.current = {
-      renderer, composer, ssao, camera, controls,
+      renderer, camera, controls,
       wallGroup, doorGroup, windowGroup, floorGroup, grid, center, radius
     };
 
@@ -468,7 +453,6 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
       camera.aspect = host.current.clientWidth / host.current.clientHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(host.current.clientWidth, host.current.clientHeight);
-      composer.setSize(host.current.clientWidth, host.current.clientHeight);
     };
 
     const observer = new ResizeObserver(resize);
@@ -479,7 +463,7 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
     const animate = () => {
       frame = requestAnimationFrame(animate);
       controls.update();
-      composer.render();
+      renderer.render(scene, camera);
     };
     animate();
 
@@ -488,7 +472,6 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
       observer.disconnect();
       window.removeEventListener("resize", resize);
       controls.dispose();
-      composer.dispose();
       renderer.dispose();
       stoneTexture?.dispose();
       woodTexture?.dispose();
@@ -502,7 +485,7 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
       sceneRefs.current = null;
       if (renderer.domElement.parentNode === el) el.removeChild(renderer.domElement);
     };
-  }, [data, renderMode, sectionMode, aoEnabled, shadowsEnabled]);
+  }, [data, renderMode, sectionMode, shadowsEnabled]);
 
   useEffect(() => {
     const refs = sceneRefs.current;
@@ -547,7 +530,6 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
   function captureImage() {
     const refs = sceneRefs.current;
     if (!refs) return;
-    refs.composer.render();
     const url = refs.renderer.domElement.toDataURL("image/png");
     const a = document.createElement("a");
     a.href = url;
@@ -589,7 +571,7 @@ export default function Viewer3D({ data }: { data: FloorplanExtraction | null })
           <label className="viewerToggle"><input type="checkbox" checked={layers.grid} onChange={() => toggleLayer("grid")} /><span>Izgara</span><b>—</b></label>
 
           <div className="viewerPanelTitle qualityTitle">Görsel Kalite</div>
-          <label className="viewerToggle"><input type="checkbox" checked={aoEnabled} onChange={() => setAoEnabled(v => !v)} /><span>Ambient Occlusion</span><b>AO</b></label>
+          <label className="viewerToggle"><input type="checkbox" checked={shadowsEnabled} readOnly /><span>Gölge derinliği</span><b>ON</b></label>
           <label className="viewerToggle"><input type="checkbox" checked={shadowsEnabled} onChange={() => setShadowsEnabled(v => !v)} /><span>Yumuşak Gölgeler</span><b>HD</b></label>
 
           <div className="viewerHelp">

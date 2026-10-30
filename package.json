@@ -12,7 +12,9 @@
     "next": "^15.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "three": "^0.179.1"
+    "three": "^0.179.1",
+    "postprocessing": "^6.39.5",
+    "three-mesh-bvh": "^0.9.17"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

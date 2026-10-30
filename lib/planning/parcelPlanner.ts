@@ -11,6 +11,7 @@ export type ZoningInput = {
   useType: "residential" | "mixed" | "tourism";
   target: "auto" | "villa" | "apartment" | "site";
   avgUnitGross: number;
+  buildableArea?: number;
 };
 
 export type ProjectScenario = {
@@ -53,7 +54,8 @@ function clamp(v:number,min:number,max:number){ return Math.max(min,Math.min(max
 
 export function buildScenarios(input: ZoningInput): ProjectScenario[] {
   const area = Math.max(1, input.parcelArea);
-  const maxFootprint = Math.max(1, area * input.taks);
+  const zoningFootprint = Math.max(1, area * input.taks);
+  const maxFootprint = Math.max(1, Math.min(zoningFootprint, input.buildableArea || zoningFootprint));
   const maxGross = Math.max(maxFootprint, area * input.kaks);
   const floors = clamp(Math.ceil(maxGross / maxFootprint), 1, input.maxFloors);
   const buildableGross = Math.min(maxGross, maxFootprint * floors);

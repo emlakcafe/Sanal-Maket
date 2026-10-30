@@ -24,6 +24,7 @@ export default function ParcelPanel({
 }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [parcelBoundary, setParcelBoundary] = useState<Array<[number, number]>>([]);
 
   const localityQuery = useMemo(
     () => [value.neighborhood, value.district, value.city, "Türkiye"].filter(Boolean).join(", "),
@@ -82,6 +83,46 @@ export default function ParcelPanel({
     }
   }
 
+  async function importKml(file: File | null) {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const xml = new DOMParser().parseFromString(text, "application/xml");
+      const coordNodes = Array.from(xml.getElementsByTagName("coordinates"));
+      const raw = coordNodes.map(n => n.textContent || "").join(" ");
+      const points = raw
+        .trim()
+        .split(/\s+/)
+        .map(token => token.split(","))
+        .filter(parts => parts.length >= 2)
+        .map(parts => [Number(parts[0]), Number(parts[1])] as [number, number])
+        .filter(([lon, lat]) => Number.isFinite(lon) && Number.isFinite(lat));
+
+      if (points.length < 3) throw new Error("KML içinde geçerli parsel koordinatı bulunamadı.");
+
+      const unique = points.filter((p, i, arr) => i === 0 || p[0] !== arr[i - 1][0] || p[1] !== arr[i - 1][1]);
+      const centroid = unique.reduce(
+        (acc, [lon, lat]) => ({ lon: acc.lon + lon, lat: acc.lat + lat }),
+        { lon: 0, lat: 0 }
+      );
+      centroid.lon /= unique.length;
+      centroid.lat /= unique.length;
+
+      setParcelBoundary(unique);
+      onChange({
+        ...value,
+        lat: centroid.lat,
+        lon: centroid.lon,
+        displayName: value.block && value.parcel
+          ? `${value.city} / ${value.district} / ${value.neighborhood} / Ada ${value.block} / Parsel ${value.parcel}`
+          : file.name
+      });
+      setMessage(`TKGM KML yüklendi. ${unique.length} koordinat okundu ve gerçek parsel merkezi hesaplandı.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   function openTkgm() {
     if (!value.city || !value.district || !value.neighborhood || !value.block || !value.parcel) {
       setMessage("TKGM sorgusu için il, ilçe, mahalle/köy, ada ve parsel bilgilerini eksiksiz girin.");
@@ -122,6 +163,15 @@ export default function ParcelPanel({
         <button className="secondaryButton" onClick={openTkgm}>
           TKGM Parsel Sorgu'yu Aç
         </button>
+        <label className="secondaryButton" style={{display:"grid",placeItems:"center",cursor:"pointer"}}>
+          TKGM KML Yükle
+          <input
+            type="file"
+            accept=".kml,application/vnd.google-earth.kml+xml"
+            style={{display:"none"}}
+            onChange={e => importKml(e.target.files?.[0] || null)}
+          />
+        </label>
       </div>
 
       {message && <div className="parcelMessage">{message}</div>}
@@ -141,8 +191,14 @@ export default function ParcelPanel({
         )}
       </div>
 
+      {parcelBoundary.length > 2 && (
+        <div className="tkgmNote">
+          <strong>KML geometri hazır:</strong> {parcelBoundary.length} noktalı gerçek parsel sınırı okundu. Bu geometri sonraki adımda 3D site yerleşimine doğrudan bağlanabilir.
+        </div>
+      )}
+
       <div className="tkgmNote">
-        <strong>Entegrasyon:</strong> “MEGSİS'ten Parseli Getir” yetkili TKGM/MEGSİS WFS servisinden gerçek parsel geometrisini sorgular. Servis erişimi yapılandırılmamışsa sistem yaklaşık konum göstermeye çalışmaz; açıkça yetki eksikliğini bildirir.
+        <strong>Entegrasyon:</strong> Yetkili WFS erişimi varsa “MEGSİS'ten Parseli Getir” otomatik çalışır. Yetki yoksa resmi TKGM Parsel Sorgu'dan indirilen KML'yi “TKGM KML Yükle” ile içeri alarak gerçek parsel merkezi ve sınır geometrisi kullanılabilir.
       </div>
     </section>
   );

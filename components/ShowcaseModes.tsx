@@ -11,6 +11,9 @@ function setupRenderer(mount: HTMLDivElement, background = 0xe7eef5) {
   scene.background = new THREE.Color(background);
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.domElement.style.width = "100%";
+  renderer.domElement.style.height = "100%";
+  renderer.domElement.style.display = "block";
   renderer.shadowMap.enabled = true;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -23,7 +26,7 @@ function bindResize(mount: HTMLDivElement, renderer: THREE.WebGLRenderer, camera
   const resize = () => {
     const w = mount.clientWidth;
     const h = Math.max(420, mount.clientHeight);
-    renderer.setSize(w, h, false);
+    renderer.setSize(w, h, true);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   };

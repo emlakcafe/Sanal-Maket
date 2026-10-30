@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import styles from "./ProjectShowcase.module.css";
 import { FloorPlan3D, Interior360, RenderPresentation } from "@/components/ShowcaseModes";
 
@@ -101,8 +105,8 @@ function ProjectScene({
     scene.background = new THREE.Color(0xdbe9f2);
     scene.fog = new THREE.Fog(0xdbe9f2, 42, 85);
 
-    const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 500);
-    camera.position.set(18, 11.5, 22);
+    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 500);
+    camera.position.set(17, 10.5, 20);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -110,12 +114,22 @@ function ProjectScene({
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.08;
+    renderer.toneMappingExposure = 0.98;
     mount.appendChild(renderer.domElement);
+
+    const composer = new EffectComposer(renderer);
+    const beauty = new RenderPass(scene, camera);
+    const gtao = new GTAOPass(scene, camera, 1, 1);
+    gtao.updateGtaoMaterial({ radius: 2.0, thickness: 1.1, distanceExponent: 1.5, distanceFallOff: 0.8, scale: 1, samples: 8 });
+    gtao.updatePdMaterial({ radius: 5, samples: 8 });
+    gtao.blendIntensity = 0.7;
+    composer.addPass(beauty);
+    composer.addPass(gtao);
+    composer.addPass(new OutputPass());
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.target.set(0, 4.8, -1.5);
+    controls.target.set(0, 4.2, 0);
     controls.minDistance = 8;
     controls.maxDistance = 48;
     controls.maxPolarAngle = Math.PI / 2.06;
@@ -133,7 +147,7 @@ function ProjectScene({
     scene.add(sun);
 
     const site = new THREE.Mesh(
-      new THREE.BoxGeometry(42, 0.4, 30),
+      new THREE.BoxGeometry(48, 0.4, 34),
       new THREE.MeshStandardMaterial({ color: 0x5e7f52, roughness: 1 })
     );
     site.position.y = -0.28;
@@ -225,7 +239,7 @@ function ProjectScene({
       root.rotation.y = blockFacing[block];
       scene.add(root);
 
-      const core = new THREE.Mesh(new THREE.BoxGeometry(8.6, 11.3, 5.4), facadeMaterial);
+      const core = new THREE.Mesh(new THREE.BoxGeometry(8.9, 11.3, 5.6), facadeMaterial);
       core.position.y = 5.65;
       core.castShadow = true;
       core.receiveShadow = true;
@@ -255,10 +269,18 @@ function ProjectScene({
         slab.receiveShadow = true;
         root.add(slab);
 
-        const balcony = new THREE.Mesh(new THREE.BoxGeometry(8.9, 0.12, 0.72), balconyMaterial);
-        balcony.position.set(0, y - 0.9, 3.0);
+        const balcony = new THREE.Mesh(new THREE.BoxGeometry(9.15, 0.16, 1.05), balconyMaterial);
+        balcony.position.set(0, y - 0.88, 3.2);
         balcony.castShadow = true;
+        balcony.receiveShadow = true;
         root.add(balcony);
+
+        const balconyRail = new THREE.Mesh(
+          new THREE.BoxGeometry(8.95, 0.72, 0.07),
+          new THREE.MeshPhysicalMaterial({ color: 0xc9d7da, transparent: true, opacity: 0.42, roughness: 0.18, metalness: 0.05 })
+        );
+        balconyRail.position.set(0, y - 0.48, 3.69);
+        root.add(balconyRail);
 
         for (let col = 0; col < 4; col++) {
           const unit = units.find(u => u.block === block && u.floor === floor && u.number === col + 1);
@@ -287,9 +309,13 @@ function ProjectScene({
           panel.getWorldPosition(world);
           worldUnitPosition.set(unit.id, world);
 
-          const glass = new THREE.Mesh(new THREE.BoxGeometry(1.42, 1.58, 0.13), glassMaterial);
-          glass.position.set(x, y, z + 0.12);
+          const glass = new THREE.Mesh(new THREE.BoxGeometry(1.46, 1.62, 0.13), glassMaterial);
+          glass.position.set(x, y, z + 0.13);
           root.add(glass);
+
+          const lintel = new THREE.Mesh(new THREE.BoxGeometry(1.58, 0.12, 0.2), slabMaterial);
+          lintel.position.set(x, y + 0.92, z + 0.12);
+          root.add(lintel);
 
           const finLeft = new THREE.Mesh(new THREE.BoxGeometry(0.11, 2.3, 0.45), woodMaterial);
           finLeft.position.set(x - 0.9, y, z + 0.18);
@@ -358,6 +384,8 @@ function ProjectScene({
       const w = mount.clientWidth;
       const h = Math.max(420, mount.clientHeight);
       renderer.setSize(w, h, false);
+      composer.setSize(w, h);
+      gtao.setSize(Math.max(1, Math.round(w * 0.8)), Math.max(1, Math.round(h * 0.8)));
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
     };
@@ -370,7 +398,7 @@ function ProjectScene({
     let frame = 0;
     const render = () => {
       controls.update();
-      renderer.render(scene, camera);
+      composer.render();
       frame = requestAnimationFrame(render);
     };
     render();
@@ -380,6 +408,9 @@ function ProjectScene({
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener("click", onClick);
       controls.dispose();
+      beauty.dispose();
+      gtao.dispose();
+      composer.dispose();
       renderer.dispose();
       mount.innerHTML = "";
     };

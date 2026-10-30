@@ -115,7 +115,7 @@ export default function HomePage() {
           <h1>AI Sanal Maket Stüdyosu</h1>
           <p>Kat planı, cephe ve iç mekan renderlarını tek projede birleştirin.</p>
         </div>
-        <div className="statusBadge">v0.2 • Gerçek Geometri Motoru</div>
+        <div className="statusBadge">v0.3 • Profesyonel 3B Viewer</div>
       </header>
 
       <section className="grid">
@@ -210,8 +210,8 @@ export default function HomePage() {
         </div>
         <div>
           <span>02</span>
-          <strong>Three.js Extrusion</strong>
-          <p>AI poligonlarını tarayıcıda gerçek 3B hacme dönüştürür.</p>
+          <strong>Profesyonel 3B Viewer</strong>
+          <p>Orbit, pan, zoom, kamera açıları, katmanlar ve kesit kontrolü.</p>
         </div>
         <div>
           <span>03</span>

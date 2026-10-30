@@ -110,6 +110,9 @@ function ProjectScene({
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.domElement.style.width = "100%";
+    renderer.domElement.style.height = "100%";
+    renderer.domElement.style.display = "block";
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -383,7 +386,7 @@ function ProjectScene({
     const onResize = () => {
       const w = mount.clientWidth;
       const h = Math.max(420, mount.clientHeight);
-      renderer.setSize(w, h, false);
+      renderer.setSize(w, h, true);
       composer.setSize(w, h);
       gtao.setSize(Math.max(1, Math.round(w * 0.8)), Math.max(1, Math.round(h * 0.8)));
       camera.aspect = w / h;

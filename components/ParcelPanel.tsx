@@ -13,6 +13,8 @@ export type ParcelForm = {
   displayName?: string;
 };
 
+const TKGM_PARCEL_URL = "https://parselsorgu.tkgm.gov.tr/";
+
 export default function ParcelPanel({
   value,
   onChange
@@ -28,7 +30,7 @@ export default function ParcelPanel({
     [value.city, value.district, value.neighborhood]
   );
 
-  async function locate() {
+  async function locateRegion() {
     if (!value.city || !value.district) {
       setMessage("İl ve ilçe girin.");
       return;
@@ -40,12 +42,23 @@ export default function ParcelPanel({
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Konum bulunamadı");
       onChange({ ...value, lat: payload.lat, lon: payload.lon, displayName: payload.displayName });
-      setMessage("Uydu haritası bölge merkezine getirildi. TKGM parsel geometrisi bağlandığında ada/parsel sınırı otomatik çizilecek.");
+      setMessage("Uydu görünümü yalnızca bölge merkezine getirildi. Ada/parsel doğrulaması için resmi TKGM Parsel Sorgu düğmesini kullanın.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setLoading(false);
     }
+  }
+
+  function openTkgm() {
+    if (!value.city || !value.district || !value.neighborhood || !value.block || !value.parcel) {
+      setMessage("TKGM sorgusu için il, ilçe, mahalle/köy, ada ve parsel bilgilerini eksiksiz girin.");
+      return;
+    }
+    setMessage(
+      `TKGM Parsel Sorgu açılıyor. Resmi ekranda şu bilgileri girin: ${value.city} / ${value.district} / ${value.neighborhood} / Ada ${value.block} / Parsel ${value.parcel}.`
+    );
+    window.open(TKGM_PARCEL_URL, "_blank", "noopener,noreferrer");
   }
 
   const satelliteUrl = value.lat && value.lon
@@ -57,9 +70,9 @@ export default function ParcelPanel({
       <div className="sectionHeading">
         <div>
           <span className="eyebrow">PARSEL / KONUM</span>
-          <h3>TKGM + Uydu Hazırlığı</h3>
+          <h3>TKGM + Uydu</h3>
         </div>
-        <span className="integrationBadge">TKGM adaptörü</span>
+        <span className="integrationBadge">Resmi TKGM doğrulaması</span>
       </div>
 
       <div className="parcelGrid">
@@ -68,8 +81,11 @@ export default function ParcelPanel({
         <input placeholder="Mahalle / Köy" value={value.neighborhood} onChange={e => onChange({ ...value, neighborhood: e.target.value })} />
         <input placeholder="Ada" value={value.block} onChange={e => onChange({ ...value, block: e.target.value })} />
         <input placeholder="Parsel" value={value.parcel} onChange={e => onChange({ ...value, parcel: e.target.value })} />
-        <button className="secondaryButton" onClick={locate} disabled={loading}>
-          {loading ? "Konum aranıyor..." : "Uyduya Getir"}
+        <button className="secondaryButton" onClick={locateRegion} disabled={loading}>
+          {loading ? "Bölge aranıyor..." : "Uydu Bölgesini Göster"}
+        </button>
+        <button className="primaryButton" onClick={openTkgm}>
+          TKGM'de Parseli Doğrula
         </button>
       </div>
 
@@ -85,13 +101,13 @@ export default function ParcelPanel({
           />
         ) : (
           <div className="satellitePlaceholder">
-            İl / ilçe / mahalle girip “Uyduya Getir” seçin.
+            Bölgesel uydu görünümü için il / ilçe / mahalle girin. Kesin ada-parsel konumu için TKGM doğrulamasını kullanın.
           </div>
         )}
       </div>
 
       <div className="tkgmNote">
-        <strong>TKGM entegrasyon durumu:</strong> Arayüz ve adaptör alanı hazır. Resmî MEGSİS/TKGM servis yetkisi tanımlandığında ada-parsel geometrisi, tapu alanı ve sınır çizimi bu ekrana otomatik bağlanacak.
+        <strong>Önemli:</strong> Bu ekrandaki Google uydu görünümü ada/parsel sınırı değildir. Kesin parsel konumu ve sınırı resmi TKGM Parsel Sorgu üzerinden doğrulanmalıdır. Emlak Cafe içine otomatik parsel geometrisi getirmek için ayrıca yetkili MEGSİS/TKGM servis erişimi bağlanacaktır.
       </div>
     </section>
   );

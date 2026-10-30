@@ -54,9 +54,15 @@ export default function HomePage() {
     return "other";
   }
 
+  function makeClientId() {
+    const c = globalThis.crypto as Crypto | undefined;
+    if (c && typeof c.randomUUID === "function") return c.randomUUID();
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
   function addFiles(list: FileList | null) {
     if (!list) return;
-    const incoming = Array.from(list).map(file => ({ id: crypto.randomUUID(), file, kind: inferKind(file) }));
+    const incoming = Array.from(list).map(file => ({ id: makeClientId(), file, kind: inferKind(file) }));
     setAssets(prev => [...prev, ...incoming]);
     setProgress(0); setModelData(null); setRooms([]); setError("");
     setStatusText("Gerçek geometri üretimi için SVG kat planını seçin");

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Viewer3D from "@/components/Viewer3D";
+import type { FloorplanExtraction } from "@/lib/geometry/types";
 
 type AssetKind = "floorplan" | "facade" | "interior" | "siteplan" | "other";
 
@@ -19,21 +20,14 @@ const labels: Record<AssetKind, string> = {
   other: "Diğer"
 };
 
-const steps = [
-  "Dosyalar analiz ediliyor",
-  "Kat planı geometrisi çıkarılıyor",
-  "Cepheler eşleştiriliyor",
-  "Malzemeler hazırlanıyor",
-  "3B model birleştiriliyor",
-  "Kalite kontrolü yapılıyor"
-];
-
 export default function HomePage() {
   const [projectName, setProjectName] = useState("Yeni Proje");
   const [assets, setAssets] = useState<AssetItem[]>([]);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [activeStep, setActiveStep] = useState(0);
+  const [statusText, setStatusText] = useState("Dosyaları yükleyin");
+  const [error, setError] = useState("");
+  const [modelData, setModelData] = useState<FloorplanExtraction | null>(null);
 
   const stats = useMemo(() => ({
     floorplan: assets.filter(a => a.kind === "floorplan").length,
@@ -41,9 +35,14 @@ export default function HomePage() {
     interior: assets.filter(a => a.kind === "interior").length
   }), [assets]);
 
+  const svgFloorplan = useMemo(
+    () => assets.find(a => a.kind === "floorplan" && a.file.name.toLowerCase().endsWith(".svg")),
+    [assets]
+  );
+
   function inferKind(file: File): AssetKind {
     const n = file.name.toLocaleLowerCase("tr");
-    if (/(kat|plan|floor|zemin|bodrum|çatı|cati)/.test(n)) return "floorplan";
+    if (n.endsWith(".svg") || /(kat|plan|floor|zemin|bodrum|çatı|cati)/.test(n)) return "floorplan";
     if (/(cephe|facade|ön|on|arka|sağ|sag|sol)/.test(n)) return "facade";
     if (/(iç|ic|interior|salon|mutfak|yatak|banyo)/.test(n)) return "interior";
     if (/(vaziyet|site)/.test(n)) return "siteplan";
@@ -58,18 +57,54 @@ export default function HomePage() {
       kind: inferKind(file)
     }));
     setAssets(prev => [...prev, ...incoming]);
+    setProgress(0);
+    setModelData(null);
+    setError("");
+    setStatusText("Gerçek geometri üretimi için SVG kat planını seçin");
   }
 
   async function runPipeline() {
-    if (!assets.length || running) return;
+    if (!svgFloorplan || running) return;
+
     setRunning(true);
-    setProgress(0);
-    for (let i = 0; i < steps.length; i++) {
-      setActiveStep(i);
-      await new Promise(resolve => setTimeout(resolve, 650));
-      setProgress(Math.round(((i + 1) / steps.length) * 100));
+    setError("");
+    setModelData(null);
+
+    try {
+      setProgress(10);
+      setStatusText("Kat planı geometri motoruna gönderiliyor");
+
+      const formData = new FormData();
+      formData.append("file", svgFloorplan.file);
+
+      setProgress(30);
+      setStatusText("AI duvar, kapı ve pencereleri ayırıyor");
+
+      const response = await fetch("/api/geometry/extract", {
+        method: "POST",
+        body: formData
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.detail || payload?.error || "Geometri üretilemedi.");
+      }
+
+      setProgress(75);
+      setStatusText("Poligonlar gerçek 3B geometriye dönüştürülüyor");
+      setModelData(payload as FloorplanExtraction);
+
+      await new Promise(resolve => setTimeout(resolve, 300));
+      setProgress(100);
+      setStatusText("Gerçek kat planı 3B önizlemesi hazır");
+    } catch (err) {
+      setProgress(0);
+      setStatusText("İşlem durdu");
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunning(false);
     }
-    setRunning(false);
   }
 
   return (
@@ -80,7 +115,7 @@ export default function HomePage() {
           <h1>AI Sanal Maket Stüdyosu</h1>
           <p>Kat planı, cephe ve iç mekan renderlarını tek projede birleştirin.</p>
         </div>
-        <div className="statusBadge">v0.1 • Hibrit 3B Motor</div>
+        <div className="statusBadge">v0.2 • Gerçek Geometri Motoru</div>
       </header>
 
       <section className="grid">
@@ -92,11 +127,11 @@ export default function HomePage() {
             <input
               type="file"
               multiple
-              accept=".png,.jpg,.jpeg,.webp,.pdf,.dwg,.dxf,.glb,.gltf,.obj"
+              accept=".svg,.png,.jpg,.jpeg,.webp,.pdf,.dwg,.dxf,.glb,.gltf,.obj"
               onChange={e => addFiles(e.target.files)}
             />
             <strong>Dosyaları buraya yükle</strong>
-            <span>Kat planı, vaziyet planı, dış cephe ve iç mekan renderları</span>
+            <span>Gerçek geometri testi için önce SVG kat planı yükleyin</span>
           </label>
 
           <div className="stats">
@@ -123,18 +158,23 @@ export default function HomePage() {
                     <option key={value} value={value}>{label}</option>
                   ))}
                 </select>
-                <button
-                  className="ghostButton"
-                  onClick={() => setAssets(prev => prev.filter(a => a.id !== asset.id))}
-                >
+                <button className="ghostButton" onClick={() => setAssets(prev => prev.filter(a => a.id !== asset.id))}>
                   Sil
                 </button>
               </div>
             ))}
           </div>
 
-          <button className="primaryButton" disabled={!assets.length || running} onClick={runPipeline}>
-            {running ? "Sanal maket hazırlanıyor..." : "AI ile Sanal Maket Oluştur"}
+          {!svgFloorplan && assets.length > 0 && (
+            <div className="notice">
+              Gerçek motorun bu ilk sürümü için bir <b>SVG kat planı</b> gerekiyor. PNG/PDF desteğini sıradaki aşamada ekleyeceğiz.
+            </div>
+          )}
+
+          {error && <div className="errorBox">{error}</div>}
+
+          <button className="primaryButton" disabled={!svgFloorplan || running} onClick={runPipeline}>
+            {running ? "Gerçek model hazırlanıyor..." : "Gerçek Kat Planından 3B Oluştur"}
           </button>
 
           <div className="pipeline">
@@ -143,7 +183,7 @@ export default function HomePage() {
             </div>
             <div className="pipelineText">
               <strong>{progress}%</strong>
-              <span>{running ? steps[activeStep] : progress === 100 ? "Önizleme hazır" : "Dosyaları yükleyin"}</span>
+              <span>{statusText}</span>
             </div>
           </div>
         </div>
@@ -154,29 +194,29 @@ export default function HomePage() {
               <span className="eyebrow">3B ÖNİZLEME</span>
               <h2>{projectName || "Proje"}</h2>
             </div>
-            <span className={progress === 100 ? "ready" : "waiting"}>
-              {progress === 100 ? "Hazır" : "Taslak"}
+            <span className={modelData ? "ready" : "waiting"}>
+              {modelData ? "Gerçek model" : "Plan bekleniyor"}
             </span>
           </div>
-          <Viewer3D ready={progress === 100} />
+          <Viewer3D data={modelData} />
         </div>
       </section>
 
       <section className="engineStrip">
         <div>
           <span>01</span>
-          <strong>Geometri Motoru</strong>
-          <p>Kat planı → duvar, kapı, pencere ve kat hacmi.</p>
+          <strong>ResNet-UNet Geometri</strong>
+          <p>SVG plandan duvar, kapı ve pencere poligonlarını çıkarır.</p>
         </div>
         <div>
           <span>02</span>
-          <strong>Referans Motoru</strong>
-          <p>Cephe ve iç mekan görsellerini mimari modele bağlar.</p>
+          <strong>Three.js Extrusion</strong>
+          <p>AI poligonlarını tarayıcıda gerçek 3B hacme dönüştürür.</p>
         </div>
         <div>
           <span>03</span>
-          <strong>Kalite Kontrol</strong>
-          <p>Plan, cephe ve ölçek tutarlılığını doğrular.</p>
+          <strong>Sıradaki Aşama</strong>
+          <p>PNG/PDF dönüştürme, cephe referansı ve PBR malzeme.</p>
         </div>
       </section>
     </main>

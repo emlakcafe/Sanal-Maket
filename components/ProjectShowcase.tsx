@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import styles from "./ProjectShowcase.module.css";
 
+type BlockId = "A" | "B" | "C" | "D" | "E";
 type UnitStatus = "available" | "reserved" | "sold";
+type ViewMode = "render" | "site" | "satellite" | "floor" | "inside";
+
 type Unit = {
   id: string;
-  block: "A" | "B" | "C" | "D";
+  block: BlockId;
   floor: number;
   number: number;
   type: "1+1" | "2+1" | "3+1";
@@ -24,16 +27,19 @@ const statusLabel: Record<UnitStatus, string> = {
   sold: "Satıldı"
 };
 
+const BLOCKS: BlockId[] = ["A", "B", "C", "D", "E"];
+
 function buildUnits(): Unit[] {
-  const blocks = ["A", "B", "C", "D"] as const;
   const units: Unit[] = [];
   let index = 0;
-  for (const block of blocks) {
-    for (let floor = 1; floor <= 5; floor++) {
+
+  for (const block of BLOCKS) {
+    for (let floor = 1; floor <= 4; floor++) {
       for (let number = 1; number <= 4; number++) {
         const type = number === 1 ? "1+1" : number === 4 ? "3+1" : "2+1";
         const gross = type === "1+1" ? 74.7 : type === "2+1" ? 104.56 : 129.12;
-        const status: UnitStatus = index % 8 === 2 ? "reserved" : index % 11 === 5 ? "sold" : "available";
+        const status: UnitStatus = index % 9 === 2 ? "reserved" : index % 13 === 5 ? "sold" : "available";
+
         units.push({
           id: `${block}-${String((floor - 1) * 4 + number).padStart(2, "0")}`,
           block,
@@ -49,17 +55,40 @@ function buildUnits(): Unit[] {
       }
     }
   }
+
   return units;
+}
+
+function createTree() {
+  const tree = new THREE.Group();
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.13, 0.18, 1.1, 10),
+    new THREE.MeshStandardMaterial({ color: 0x76523b, roughness: 1 })
+  );
+  trunk.position.y = 0.55;
+  tree.add(trunk);
+
+  const crown = new THREE.Mesh(
+    new THREE.SphereGeometry(0.72, 14, 10),
+    new THREE.MeshStandardMaterial({ color: 0x4f7e43, roughness: 1 })
+  );
+  crown.position.y = 1.55;
+  crown.scale.set(1, 1.2, 1);
+  tree.add(crown);
+
+  return tree;
 }
 
 function ProjectScene({
   selectedId,
   units,
-  onSelect
+  onSelect,
+  focusNonce
 }: {
   selectedId: string;
   units: Unit[];
   onSelect: (id: string) => void;
+  focusNonce: number;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
@@ -68,122 +97,204 @@ function ProjectScene({
     if (!mount) return;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xdce8ef);
+    scene.background = new THREE.Color(0xdbe9f2);
+    scene.fog = new THREE.Fog(0xdbe9f2, 42, 85);
 
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
-    camera.position.set(22, 15, 28);
+    const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 500);
+    camera.position.set(24, 15, 30);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
     mount.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.target.set(0, 4.5, 0);
-    controls.minDistance = 12;
-    controls.maxDistance = 55;
-    controls.maxPolarAngle = Math.PI / 2.05;
+    controls.target.set(0, 4.3, 0);
+    controls.minDistance = 10;
+    controls.maxDistance = 65;
+    controls.maxPolarAngle = Math.PI / 2.06;
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x6a7a63, 2.2));
-    const sun = new THREE.DirectionalLight(0xffffff, 3.2);
-    sun.position.set(15, 24, 10);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x72816c, 2.1));
+
+    const sun = new THREE.DirectionalLight(0xffffff, 3.8);
+    sun.position.set(18, 28, 13);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -30;
+    sun.shadow.camera.right = 30;
+    sun.shadow.camera.top = 30;
+    sun.shadow.camera.bottom = -30;
     scene.add(sun);
 
-    const ground = new THREE.Mesh(
-      new THREE.BoxGeometry(38, 0.35, 26),
-      new THREE.MeshStandardMaterial({ color: 0x466542, roughness: 1 })
+    const site = new THREE.Mesh(
+      new THREE.BoxGeometry(42, 0.4, 30),
+      new THREE.MeshStandardMaterial({ color: 0x5e7f52, roughness: 1 })
     );
-    ground.position.y = -0.25;
-    ground.receiveShadow = true;
-    scene.add(ground);
+    site.position.y = -0.28;
+    site.receiveShadow = true;
+    scene.add(site);
 
-    const pathMaterial = new THREE.MeshStandardMaterial({ color: 0xb7b3aa, roughness: 0.95 });
-    const path = new THREE.Mesh(new THREE.BoxGeometry(9, 0.12, 23), pathMaterial);
-    path.position.set(0, 0, 0);
-    path.receiveShadow = true;
-    scene.add(path);
+    const pathMaterial = new THREE.MeshStandardMaterial({ color: 0xc2bdb1, roughness: 0.95 });
+    const centralPath = new THREE.Mesh(new THREE.BoxGeometry(8.8, 0.12, 27), pathMaterial);
+    centralPath.position.y = 0;
+    centralPath.receiveShadow = true;
+    scene.add(centralPath);
+
+    const crossPath = new THREE.Mesh(new THREE.BoxGeometry(31, 0.12, 3.4), pathMaterial);
+    crossPath.position.set(0, 0.01, -3.8);
+    crossPath.receiveShadow = true;
+    scene.add(crossPath);
+
+    const poolShell = new THREE.Mesh(
+      new THREE.BoxGeometry(8.8, 0.2, 5.4),
+      new THREE.MeshStandardMaterial({ color: 0xd6d2c8, roughness: 0.9 })
+    );
+    poolShell.position.set(0, 0.08, -8.2);
+    scene.add(poolShell);
 
     const pool = new THREE.Mesh(
-      new THREE.BoxGeometry(7.6, 0.12, 4.6),
-      new THREE.MeshPhysicalMaterial({ color: 0x60bfe8, roughness: 0.18, metalness: 0.05 })
+      new THREE.BoxGeometry(8, 0.1, 4.6),
+      new THREE.MeshPhysicalMaterial({
+        color: 0x54b9e8,
+        roughness: 0.15,
+        metalness: 0.05,
+        transparent: true,
+        opacity: 0.92
+      })
     );
-    pool.position.set(0, 0.08, -4.4);
+    pool.position.set(0, 0.2, -8.2);
     scene.add(pool);
 
-    const blockPositions: Record<string, THREE.Vector3> = {
-      A: new THREE.Vector3(-11, 0, 5),
-      B: new THREE.Vector3(11, 0, 5),
-      C: new THREE.Vector3(-11, 0, -7),
-      D: new THREE.Vector3(11, 0, -7)
+    const court = new THREE.Mesh(
+      new THREE.BoxGeometry(9.2, 0.08, 5.8),
+      new THREE.MeshStandardMaterial({ color: 0xb56b48, roughness: 0.9 })
+    );
+    court.position.set(0, 0.15, 5.8);
+    scene.add(court);
+
+    const courtLines = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(8.7, 0.04, 5.3)),
+      new THREE.LineBasicMaterial({ color: 0xf4eee4 })
+    );
+    courtLines.position.set(0, 0.22, 5.8);
+    scene.add(courtLines);
+
+    const blockPositions: Record<BlockId, THREE.Vector3> = {
+      A: new THREE.Vector3(-13, 0, 7),
+      B: new THREE.Vector3(13, 0, 7),
+      C: new THREE.Vector3(-13, 0, -7),
+      D: new THREE.Vector3(13, 0, -7),
+      E: new THREE.Vector3(0, 0, -14)
+    };
+
+    const blockFacing: Record<BlockId, number> = {
+      A: 0,
+      B: Math.PI,
+      C: 0,
+      D: Math.PI,
+      E: Math.PI
     };
 
     const clickable: THREE.Mesh[] = [];
     const unitMesh = new Map<string, THREE.Mesh>();
+    const worldUnitPosition = new Map<string, THREE.Vector3>();
 
-    const facadeMaterial = new THREE.MeshStandardMaterial({ color: 0xe8e1d3, roughness: 0.76 });
-    const slabMaterial = new THREE.MeshStandardMaterial({ color: 0xd6d1c8, roughness: 0.9 });
+    const facadeMaterial = new THREE.MeshStandardMaterial({ color: 0xe8e1d3, roughness: 0.72 });
+    const slabMaterial = new THREE.MeshStandardMaterial({ color: 0xd8d2c6, roughness: 0.88 });
     const glassMaterial = new THREE.MeshPhysicalMaterial({
-      color: 0xa9c9d4,
+      color: 0xa7c8d4,
       transparent: true,
-      opacity: 0.76,
-      roughness: 0.2,
+      opacity: 0.75,
+      roughness: 0.17,
       metalness: 0.08
     });
-    const woodMaterial = new THREE.MeshStandardMaterial({ color: 0x8c694c, roughness: 0.8 });
+    const woodMaterial = new THREE.MeshStandardMaterial({ color: 0x8e6748, roughness: 0.78 });
+    const balconyMaterial = new THREE.MeshStandardMaterial({ color: 0xe1ded7, roughness: 0.82 });
 
-    for (const block of ["A", "B", "C", "D"] as const) {
+    for (const block of BLOCKS) {
       const origin = blockPositions[block];
       const root = new THREE.Group();
       root.position.copy(origin);
+      root.rotation.y = blockFacing[block];
       scene.add(root);
 
-      const core = new THREE.Mesh(new THREE.BoxGeometry(8.4, 14.1, 5.3), facadeMaterial);
-      core.position.y = 7.05;
+      const core = new THREE.Mesh(new THREE.BoxGeometry(8.6, 11.3, 5.4), facadeMaterial);
+      core.position.y = 5.65;
       core.castShadow = true;
       core.receiveShadow = true;
       root.add(core);
 
-      for (let floor = 1; floor <= 5; floor++) {
+      const penthouseCap = new THREE.Mesh(new THREE.BoxGeometry(8.1, 0.35, 5), slabMaterial);
+      penthouseCap.position.y = 11.45;
+      root.add(penthouseCap);
+
+      for (let floor = 1; floor <= 4; floor++) {
         const y = (floor - 1) * 2.75 + 1.45;
-        const slab = new THREE.Mesh(new THREE.BoxGeometry(8.9, 0.14, 5.7), slabMaterial);
+
+        const slab = new THREE.Mesh(new THREE.BoxGeometry(9.1, 0.14, 5.8), slabMaterial);
         slab.position.y = y - 1.35;
+        slab.receiveShadow = true;
         root.add(slab);
+
+        const balcony = new THREE.Mesh(new THREE.BoxGeometry(8.9, 0.12, 0.72), balconyMaterial);
+        balcony.position.set(0, y - 0.9, 3.0);
+        balcony.castShadow = true;
+        root.add(balcony);
 
         for (let col = 0; col < 4; col++) {
           const unit = units.find(u => u.block === block && u.floor === floor && u.number === col + 1);
           if (!unit) continue;
-          const x = -3.05 + col * 2.05;
-          const z = block === "A" || block === "B" ? 2.73 : -2.73;
 
-          const highlight = new THREE.Mesh(
-            new THREE.BoxGeometry(1.78, 2.18, 0.16),
+          const x = -3.05 + col * 2.05;
+          const z = 2.73;
+
+          const panel = new THREE.Mesh(
+            new THREE.BoxGeometry(1.78, 2.16, 0.18),
             new THREE.MeshStandardMaterial({
               color: unit.status === "sold" ? 0xc5cbd2 : unit.status === "reserved" ? 0xe9b64d : 0xf7f9fb,
               emissive: 0x000000,
-              roughness: 0.45,
+              roughness: 0.42,
               transparent: true,
-              opacity: unit.status === "available" ? 0.88 : 0.95
+              opacity: unit.status === "available" ? 0.88 : 0.96
             })
           );
-          highlight.position.set(x, y, z);
-          highlight.userData.unitId = unit.id;
-          root.add(highlight);
-          clickable.push(highlight);
-          unitMesh.set(unit.id, highlight);
+          panel.position.set(x, y, z);
+          panel.userData.unitId = unit.id;
+          root.add(panel);
+          clickable.push(panel);
+          unitMesh.set(unit.id, panel);
 
-          const glass = new THREE.Mesh(new THREE.BoxGeometry(1.42, 1.6, 0.12), glassMaterial);
-          glass.position.set(x, y, z + (z > 0 ? 0.11 : -0.11));
+          const world = new THREE.Vector3();
+          panel.getWorldPosition(world);
+          worldUnitPosition.set(unit.id, world);
+
+          const glass = new THREE.Mesh(new THREE.BoxGeometry(1.42, 1.58, 0.13), glassMaterial);
+          glass.position.set(x, y, z + 0.12);
           root.add(glass);
 
-          const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.28, 0.34), woodMaterial);
-          fin.position.set(x - 0.9, y, z + (z > 0 ? 0.18 : -0.18));
-          root.add(fin);
+          const finLeft = new THREE.Mesh(new THREE.BoxGeometry(0.11, 2.3, 0.45), woodMaterial);
+          finLeft.position.set(x - 0.9, y, z + 0.18);
+          root.add(finLeft);
+
+          const finRight = finLeft.clone();
+          finRight.position.x = x + 0.9;
+          root.add(finRight);
         }
       }
+    }
+
+    for (const [x, z] of [
+      [-5, 10], [5, 10], [-5, 2], [5, 2], [-6, -2], [6, -2],
+      [-7, -11], [7, -11], [-18, 0], [18, 0], [-18, -12], [18, -12]
+    ] as [number, number][]) {
+      const tree = createTree();
+      tree.position.set(x, 0, z);
+      scene.add(tree);
     }
 
     const updateHighlight = () => {
@@ -197,14 +308,26 @@ function ProjectScene({
           const unit = units.find(u => u.id === id)!;
           mat.emissive.set(0x000000);
           mat.color.set(unit.status === "sold" ? 0xc5cbd2 : unit.status === "reserved" ? 0xe9b64d : 0xf7f9fb);
-          mat.opacity = unit.status === "available" ? 0.88 : 0.95;
+          mat.opacity = unit.status === "available" ? 0.88 : 0.96;
         }
       }
     };
     updateHighlight();
 
+    const focusSelected = () => {
+      const target = worldUnitPosition.get(selectedId);
+      if (!target) return;
+      const offset = new THREE.Vector3(8, 5.2, 9);
+      controls.target.copy(target);
+      camera.position.copy(target.clone().add(offset));
+      controls.update();
+    };
+
+    if (focusNonce > 0) focusSelected();
+
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
+
     const onClick = (event: MouseEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -222,10 +345,11 @@ function ProjectScene({
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
     };
+
     onResize();
 
-    const ro = new ResizeObserver(onResize);
-    ro.observe(mount);
+    const resizeObserver = new ResizeObserver(onResize);
+    resizeObserver.observe(mount);
 
     let frame = 0;
     const render = () => {
@@ -237,46 +361,54 @@ function ProjectScene({
 
     return () => {
       cancelAnimationFrame(frame);
-      ro.disconnect();
+      resizeObserver.disconnect();
       renderer.domElement.removeEventListener("click", onClick);
       controls.dispose();
       renderer.dispose();
       mount.innerHTML = "";
     };
-  }, [selectedId, units, onSelect]);
+  }, [selectedId, units, onSelect, focusNonce]);
 
   return <div ref={mountRef} className={styles.scene} />;
 }
 
 export default function ProjectShowcase() {
   const units = useMemo(() => buildUnits(), []);
-  const [selectedId, setSelectedId] = useState("A-06");
-  const [mode, setMode] = useState<"render" | "site" | "satellite" | "floor" | "inside">("site");
-  const [blockFilter, setBlockFilter] = useState<"ALL" | "A" | "B" | "C" | "D">("ALL");
+  const [selectedId, setSelectedId] = useState("B-11");
+  const [mode, setMode] = useState<ViewMode>("site");
+  const [blockFilter, setBlockFilter] = useState<"ALL" | BlockId>("ALL");
+  const [focusNonce, setFocusNonce] = useState(0);
+
+  const selectUnit = useCallback((id: string) => setSelectedId(id), []);
   const selected = units.find(u => u.id === selectedId) || units[0];
   const visibleUnits = blockFilter === "ALL" ? units : units.filter(u => u.block === blockFilter);
 
   const stats = units.reduce(
-    (acc, u) => {
-      acc[u.status]++;
+    (acc, unit) => {
+      acc[unit.status]++;
       return acc;
     },
     { available: 0, reserved: 0, sold: 0 } as Record<UnitStatus, number>
   );
+
+  function focusSelectedUnit() {
+    setMode("site");
+    setFocusNonce(v => v + 1);
+  }
 
   return (
     <main className={styles.page}>
       <header className={styles.topbar}>
         <div className={styles.brand}><span>ec.</span><b>emlak cafe</b></div>
         <div className={styles.kicker}>INTERAKTİF 360° PROJE TANITIMI</div>
-        <button className={styles.outlineButton}>Proje stüdyosuna dön</button>
+        <button className={styles.outlineButton} onClick={() => location.href = "/"}>Proje stüdyosuna dön</button>
       </header>
 
       <section className={styles.hero}>
         <div>
           <p className={styles.eyebrow}>YALOVA · AKKÖY · KURUMSAL PROJE</p>
           <h1>Emlak Cafe <span>Residence</span></h1>
-          <p className={styles.subtitle}>Bağ bahçe, havuz başında bir yaşam. Site içi 3B gezinti, daire seçimi ve sunum ekranı.</p>
+          <p className={styles.subtitle}>Havuz, spor alanı, peyzaj ve seçilebilir dairelerle interaktif proje deneyimi.</p>
         </div>
         <div className={styles.heroStats}>
           <div><b>05</b><span>Blok</span></div>
@@ -295,25 +427,36 @@ export default function ProjectShowcase() {
               ["floor", "3D Kat planı"],
               ["inside", "Daire içi"]
             ].map(([key, label]) => (
-              <button key={key} onClick={() => setMode(key as typeof mode)} className={mode === key ? styles.activeTab : ""}>{label}</button>
+              <button
+                key={key}
+                onClick={() => setMode(key as ViewMode)}
+                className={mode === key ? styles.activeTab : ""}
+              >
+                {label}
+              </button>
             ))}
           </div>
 
           <div className={styles.viewerStage}>
             {mode === "site" ? (
-              <ProjectScene selectedId={selected.id} units={units} onSelect={setSelectedId} />
+              <ProjectScene
+                selectedId={selected.id}
+                units={units}
+                onSelect={selectUnit}
+                focusNonce={focusNonce}
+              />
             ) : (
               <div className={styles.placeholder}>
                 <b>{mode === "render" ? "Mimari Render" : mode === "satellite" ? "Uydu + 3D" : mode === "floor" ? "3D Kat Planı" : "Daire İçi 360"}</b>
-                <span>Bu sekmenin veri bağlantısı bir sonraki aşamada aktif edilecek.</span>
+                <span>Bu sekmenin gerçek proje veri bağlantısı sonraki geliştirme aşamasında aktif edilecek.</span>
               </div>
             )}
           </div>
 
           <div className={styles.viewerTools}>
-            <button>360° çevresinde sürükle</button>
-            <button>Yakınlaştır / uzaklaştır</button>
-            <button>Seçili daire: {selected.id}</button>
+            <button onClick={() => setMode("site")}>360° proje çevresinde gezin</button>
+            <button onClick={focusSelectedUnit}>Seçili daireye yaklaş</button>
+            <button onClick={focusSelectedUnit}>Seçili daire: {selected.id}</button>
           </div>
         </div>
 
@@ -328,18 +471,27 @@ export default function ProjectShowcase() {
           </div>
 
           <div className={styles.areaMetric}><b>{selected.gross.toFixed(2)}</b><span>m² brüt</span></div>
+
           <dl className={styles.details}>
             <div><dt>Daire tipi</dt><dd>{selected.type}</dd></div>
             <div><dt>Net alan</dt><dd>{selected.net.toFixed(2)} m²</dd></div>
             <div><dt>Cephe</dt><dd>Kuzey · Batı</dd></div>
-            <div><dt>Bulunduğu kat</dt><dd>{selected.floor} / 5</dd></div>
+            <div><dt>Bulunduğu kat</dt><dd>{selected.floor} / 4</dd></div>
           </dl>
 
-          <div className={styles.price}><span>Anahtar teslim satış fiyatı</span><b>₺{selected.price.toLocaleString("tr-TR")}</b></div>
-          <div className={styles.ctaRow}><button>Teklif ver</button><button className={styles.secondary}>Rezerve et</button></div>
+          <div className={styles.price}>
+            <span>Anahtar teslim satış fiyatı</span>
+            <b>₺{selected.price.toLocaleString("tr-TR")}</b>
+          </div>
+
+          <div className={styles.ctaRow}>
+            <button>Teklif ver</button>
+            <button className={styles.secondary}>Rezerve et</button>
+          </div>
+
           <button className={styles.whatsapp}>WhatsApp & sorumlu telefonu bekleniyor</button>
-          <button className={styles.linkButton}>Daireyi 3D modelde göster</button>
-          <button className={styles.linkButton}>Daireye git</button>
+          <button className={styles.linkButton} onClick={focusSelectedUnit}>Daireyi 3D modelde göster</button>
+          <button className={styles.linkButton} onClick={() => setMode("inside")}>Daire içine geç</button>
         </aside>
       </section>
 
@@ -348,7 +500,7 @@ export default function ProjectShowcase() {
         <div><span>Ada / Parsel</span><b>382 / 1</b></div>
         <div><span>Tapu alanı</span><b>19.095,17 m²</b></div>
         <div><span>Pafta</span><b>G22c07c2a</b></div>
-        <button className={styles.outlineButton}>Uydu görünümüne geç</button>
+        <button className={styles.outlineButton} onClick={() => setMode("satellite")}>Uydu görünümüne geç</button>
       </section>
 
       <section className={styles.inventory}>
@@ -357,6 +509,7 @@ export default function ProjectShowcase() {
             <span className={styles.eyebrow}>SATIŞA UYGUN YAŞAM BÖLÜMÜ</span>
             <h3>Daireleri keşfedin</h3>
           </div>
+
           <div className={styles.inventoryStats}>
             <div><b>{stats.available}</b><span>Satılık</span></div>
             <div><b>{stats.reserved}</b><span>Rezerve</span></div>
@@ -365,8 +518,12 @@ export default function ProjectShowcase() {
         </div>
 
         <div className={styles.filterRow}>
-          {(["ALL", "A", "B", "C", "D"] as const).map(block => (
-            <button key={block} onClick={() => setBlockFilter(block)} className={blockFilter === block ? styles.filterActive : ""}>
+          {(["ALL", ...BLOCKS] as const).map(block => (
+            <button
+              key={block}
+              onClick={() => setBlockFilter(block)}
+              className={blockFilter === block ? styles.filterActive : ""}
+            >
               {block === "ALL" ? "Tüm bloklar" : `${block} Blok`}
             </button>
           ))}

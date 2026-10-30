@@ -7,6 +7,7 @@ import styles from "./LandDevelopmentStudio.module.css";
 import { calculateEnvelopeAreaSqm, createBuildableEnvelope } from "@/lib/zoning/buildableEnvelope";
 
 const SatelliteParcelMap = dynamic(() => import("@/components/SatelliteParcelMap"), { ssr: false });
+const Satellite3DProjectMap = dynamic(() => import("@/components/Satellite3DProjectMap"), { ssr: false });
 
 function parseKml(text:string): ParcelPoint[] {
   const xml = new DOMParser().parseFromString(text,"application/xml");
@@ -119,6 +120,21 @@ export default function LandDevelopmentStudio() {
             <span><i className={styles.blueDot}/>Yapılaşabilir alan</span>
           </div>
           <p className={styles.warning}>Bu görüntü gerçek zamanlı canlı kamera değildir; uydu/hava görüntüsü sağlayıcısının mevcut görüntü katmanıdır.</p>
+        </div>}
+
+        {points.length>2 && selected && envelope.valid && <div className={styles.satellite3dCard}>
+          <div className={styles.envelopeHead}>
+            <div><span>EMLAK CAFE AI · UYDU + 3D</span><h3>{selected.title} · İnteraktif Proje Sunumu</h3></div>
+            <div><b>{selected.blocks}</b><span>blok / yapı</span></div>
+          </div>
+          <Satellite3DProjectMap parcel={points} buildable={envelope.points} scenario={selected} />
+          <div className={styles.presentationStats}>
+            <span><b>{selected.estimatedUnits}</b> bağımsız bölüm</span>
+            <span><b>{selected.parking}</b> otopark</span>
+            <span><b>{selected.floors}</b> kat</span>
+            <span><b>{Math.round(selected.grossConstruction).toLocaleString("tr-TR")} m²</b> inşaat</span>
+          </div>
+          <p className={styles.warning}>3D yerleşim imar girdileri ve yapılaşabilir alan üzerinden üretilen konsept sunumdur. Nihai ruhsat projesi değildir.</p>
         </div>}
 
         {points.length>2&&<div className={styles.envelopeCard}>

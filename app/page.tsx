@@ -115,7 +115,7 @@ export default function HomePage() {
           <h1>AI Sanal Maket Stüdyosu</h1>
           <p>Kat planı, cephe ve iç mekan renderlarını tek projede birleştirin.</p>
         </div>
-        <div className="statusBadge">v0.4 • Mimari Sunum Modu</div>
+        <div className="statusBadge">v0.5 • Mimari Renderer</div>
       </header>
 
       <section className="grid">
@@ -210,8 +210,8 @@ export default function HomePage() {
         </div>
         <div>
           <span>02</span>
-          <strong>Mimari Sunum Motoru</strong>
-          <p>Sunum/teknik görünüm, iyileştirilmiş ışık, malzeme ve sahne kalitesi.</p>
+          <strong>Mimari Renderer</strong>
+          <p>Normalize kapı/pencere geometrisi, AO, yumuşak gölge, PBR malzeme ve dollhouse sunumu.</p>
         </div>
         <div>
           <span>03</span>

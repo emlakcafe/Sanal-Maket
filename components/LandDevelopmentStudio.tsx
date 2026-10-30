@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { buildScenarios, calculatePolygonAreaSqm, type ParcelPoint, type ProjectScenario, type ZoningInput } from "@/lib/planning/parcelPlanner";
 import styles from "./LandDevelopmentStudio.module.css";
+import { calculateEnvelopeAreaSqm, createBuildableEnvelope } from "@/lib/zoning/buildableEnvelope";
 
 function parseKml(text:string): ParcelPoint[] {
   const xml = new DOMParser().parseFromString(text,"application/xml");
@@ -22,7 +23,12 @@ export default function LandDevelopmentStudio() {
     useType:"residential",target:"auto",avgUnitGross:105
   });
 
-  const scenarios=useMemo(()=>buildScenarios(input),[input]);
+  const envelope=useMemo(()=>createBuildableEnvelope(points,{
+    front:input.frontSetback,side:input.sideSetback,rear:input.rearSetback
+  }),[points,input.frontSetback,input.sideSetback,input.rearSetback]);
+  const envelopeArea=useMemo(()=>calculateEnvelopeAreaSqm(envelope.points),[envelope.points]);
+  const effectiveInput=useMemo(()=>({...input,buildableArea:envelope.valid?envelopeArea:undefined}),[input,envelope.valid,envelopeArea]);
+  const scenarios=useMemo(()=>buildScenarios(effectiveInput),[effectiveInput]);
 
   async function importKml(file:File|null){
     if(!file)return;
@@ -34,8 +40,21 @@ export default function LandDevelopmentStudio() {
   }
 
   function run(){
-    const next=buildScenarios(input);
+    const next=buildScenarios(effectiveInput);
     setSelected(next[0]);
+  }
+
+  function toSvgPath(source:ParcelPoint[]){
+    if(source.length<3)return "";
+    const all=[...points,...envelope.points];
+    const lons=all.map(p=>p[0]), lats=all.map(p=>p[1]);
+    const minLon=Math.min(...lons), maxLon=Math.max(...lons), minLat=Math.min(...lats), maxLat=Math.max(...lats);
+    const w=Math.max(1e-9,maxLon-minLon), h=Math.max(1e-9,maxLat-minLat);
+    return source.map(([lon,lat],i)=>{
+      const x=30+((lon-minLon)/w)*540;
+      const y=390-((lat-minLat)/h)*340;
+      return `${i===0?"M":"L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    }).join(" ")+" Z";
   }
 
   return <main className={styles.page}>
@@ -76,6 +95,7 @@ export default function LandDevelopmentStudio() {
           <div><span>Max taban</span><b>{Math.round(input.parcelArea*input.taks).toLocaleString("tr-TR")} m²</b></div>
           <div><span>Emsal alan</span><b>{Math.round(input.parcelArea*input.kaks).toLocaleString("tr-TR")} m²</b></div>
           <div><span>Kat</span><b>{input.maxFloors}</b></div>
+          <div><span>Yapılaşabilir alan</span><b>{envelope.valid?Math.round(envelopeArea).toLocaleString("tr-TR")+" m²":"—"}</b></div>
         </div>
 
         <div className={styles.cards}>
@@ -84,6 +104,22 @@ export default function LandDevelopmentStudio() {
             <div>{s.blocks} blok/yapı · {s.estimatedUnits} bağımsız bölüm · {s.parking} otopark</div>
           </button>)}
         </div>
+
+        {points.length>2&&<div className={styles.envelopeCard}>
+          <div className={styles.envelopeHead}>
+            <div><span>İMAR GEOMETRİSİ</span><h3>Parsel + Buildable Envelope</h3></div>
+            <div><b>{envelope.setbackMeters} m</b><span>korumalı çekme</span></div>
+          </div>
+          <svg viewBox="0 0 600 420" className={styles.envelopeSvg}>
+            <path d={toSvgPath(points)} className={styles.parcelShape}/>
+            {envelope.valid&&<path d={toSvgPath(envelope.points)} className={styles.buildableShape}/>}
+          </svg>
+          <div className={styles.legend}>
+            <span><i className={styles.redDot}/>Parsel sınırı</span>
+            <span><i className={styles.blueDot}/>Yapılaşabilir alan</span>
+          </div>
+          {envelope.warning&&<p className={styles.warning}>{envelope.warning}</p>}
+        </div>}
 
         <div className={styles.visual}>
           {selected ? <>

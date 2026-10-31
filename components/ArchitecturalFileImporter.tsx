@@ -202,10 +202,7 @@ export default function ArchitecturalFileImporter(){
   const [manualSnapshotAt,setManualSnapshotAt]=useState<string>("");
   const [ifcBim,setIfcBim]=useState<{base64:string;walls:number;bytes:number;schema?:string}|null>(null);
   const previewAnchorRef=useRef<HTMLDivElement|null>(null);
-  const sessionHydratedRef=useRef(false);
-
   useEffect(()=>{
-    sessionHydratedRef.current=true;
     try{
       localStorage.removeItem("emlak-cafe-cad-project-session-v1");
     }catch{}
@@ -283,9 +280,36 @@ export default function ArchitecturalFileImporter(){
     }
   }
 
+  function startFreshProject(){
+    setFile(null);
+    setObjectUrl(null);
+    setDxf(null);
+    setDxfText("");
+    setAnalysis(null);
+    setSelection(null);
+    setBuiltFloors([]);
+    setBuildStep("ground-select");
+    setNextFloorIndex(1);
+    setProjectAssembled(false);
+    setIfcBim(null);
+    setMessage("Yeni proje hazır. DWG veya DXF dosyasını seçin.");
+    window.scrollTo({top:0,behavior:"smooth"});
+  }
+
   async function loadFile(next:File|null){
     if(objectUrl) URL.revokeObjectURL(objectUrl);
-    setObjectUrl(null); setDxf(null); setDxfText(""); setAnalysis(null); setSelection(null); setBuiltFloors([]); setBuildStep("ground-select"); setNextFloorIndex(1); setProjectAssembled(false); setIfcBim(null); setMessage(""); setFile(next);
+    setObjectUrl(null);
+    setDxf(null);
+    setDxfText("");
+    setAnalysis(null);
+    setSelection(null);
+    setBuiltFloors([]);
+    setBuildStep("ground-select");
+    setNextFloorIndex(1);
+    setProjectAssembled(false);
+    setIfcBim(null);
+    setMessage("");
+    setFile(next);
     if(!next)return;
     const info=getCadFormat(next.name);
     if(!info){setMessage("Bu dosya uzantisi henuz desteklenmiyor.");return;}
@@ -628,7 +652,7 @@ export default function ArchitecturalFileImporter(){
         {message&&<div style={{marginTop:12,padding:10,borderRadius:9,background:"#edf5ff",fontSize:12,lineHeight:1.45}}>{busy?"İşleniyor…":message}</div>}
         {dxfText&&<div style={{marginTop:14,padding:12,border:"1px solid #b8cce6",borderRadius:10,background:"#f8fbff"}}>
           <b style={{display:"block",fontSize:13,marginBottom:9}}>3D Model Ayarları</b>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:7}}>
             <button type="button" onClick={saveManualSnapshot} style={{
               padding:"9px 8px",border:0,borderRadius:8,background:"#176be0",color:"#fff",fontWeight:800,cursor:"pointer",fontSize:11
             }}>Projeyi Kaydet</button>
@@ -636,6 +660,10 @@ export default function ArchitecturalFileImporter(){
               padding:"9px 8px",border:"1px solid #9eb7d6",borderRadius:8,background:"#fff",color:"#174b86",fontWeight:800,cursor:"pointer",fontSize:11
             }}>Son Kaydı Geri Yükle</button>
           </div>
+          <button type="button" onClick={startFreshProject} style={{
+            width:"100%",padding:"8px",border:"1px solid #d8b4b4",borderRadius:8,
+            background:"#fff7f7",color:"#8a3030",fontWeight:800,cursor:"pointer",fontSize:11,marginBottom:10
+          }}>Yeni Proje / Ekranı Temizle</button>
           {manualSnapshotAt&&<div style={{fontSize:10,color:"#28653b",background:"#eaf7ef",padding:7,borderRadius:7,marginBottom:8}}>
             Güvenli kayıt: {manualSnapshotAt}
           </div>}

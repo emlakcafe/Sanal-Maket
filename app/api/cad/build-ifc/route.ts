@@ -26,6 +26,7 @@ export async function POST(request:Request){
 
     const inputPath=join(work,"analysis.json");
     const outputPath=join(work,"ground-floor.ifc");
+    const previewPath=join(work,"ground-floor-preview.glb");
     const scriptPath=join(process.cwd(),"scripts","cad","build_ifc.py");
     const localPython=join(process.cwd(),".venv-cad","Scripts","python.exe");
     const python=process.env.EZDXF_PYTHON?.trim()||localPython;
@@ -33,7 +34,7 @@ export async function POST(request:Request){
     await writeFile(inputPath,JSON.stringify({...analysis,floorHeight}),"utf8");
 
     const {stdout}=await execFileAsync(
-      python,[scriptPath,inputPath,outputPath],
+      python,[scriptPath,inputPath,outputPath,previewPath],
       {
         windowsHide:true,
         timeout:180000,
@@ -48,9 +49,11 @@ export async function POST(request:Request){
     if(meta?.error) return NextResponse.json(meta,{status:422});
 
     const bytes=await readFile(outputPath);
+    const preview=await readFile(previewPath);
     return NextResponse.json({
       ...meta,
-      ifcBase64:bytes.toString("base64")
+      ifcBase64:bytes.toString("base64"),
+      previewGlbBase64:preview.toString("base64")
     });
   }catch(error:any){
     return NextResponse.json({

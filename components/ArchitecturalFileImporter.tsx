@@ -13,7 +13,7 @@ const ProfessionalDxfViewer = dynamic(() => import("@/components/ProfessionalDxf
 const CadSemantic3DPreview = dynamic(() => import("@/components/CadSemantic3DPreview"), { ssr: false });
 const CadGlbPreview = dynamic(() => import("@/components/CadGlbPreview"), { ssr: false });
 const CadProjectPreview = dynamic(() => import("@/components/CadProjectPreview"), { ssr: false });
-const CadIfcPreview = dynamic(() => import("@/components/CadIfcPreview"), { ssr: false });
+
 
 type Pt = { x:number; y:number };
 type BuiltFloor = {
@@ -200,7 +200,7 @@ export default function ArchitecturalFileImporter(){
   const [nextFloorIndex,setNextFloorIndex]=useState(1);
   const [projectAssembled,setProjectAssembled]=useState(false);
   const [manualSnapshotAt,setManualSnapshotAt]=useState<string>("");
-  const [ifcBim,setIfcBim]=useState<{base64:string;walls:number;bytes:number;schema?:string}|null>(null);
+  const [ifcBim,setIfcBim]=useState<{base64:string;previewGlbBase64:string;walls:number;bytes:number;schema?:string;previewMeshes?:number;previewFaces?:number}|null>(null);
   const previewAnchorRef=useRef<HTMLDivElement|null>(null);
   useEffect(()=>{
     try{
@@ -397,9 +397,12 @@ export default function ArchitecturalFileImporter(){
       setAnalysis(result);
       setIfcBim({
         base64:out.ifcBase64,
+        previewGlbBase64:out.previewGlbBase64,
         walls:Number(out.walls||0),
         bytes:Number(out.bytes||0),
-        schema:out.schema
+        schema:out.schema,
+        previewMeshes:Number(out.previewMeshes||0),
+        previewFaces:Number(out.previewFaces||0)
       });
       setAnalysisProgress(100);
       setGenerationStage("Profesyonel BIM zemin kat hazır");
@@ -776,7 +779,10 @@ export default function ArchitecturalFileImporter(){
               <b>IFC:</b> {ifcBim.schema||"IFC"} · IfcWall: {ifcBim.walls} · {Math.round(ifcBim.bytes/1024)} KB
             </div>
           </div>
-          <CadIfcPreview base64={ifcBim.base64}/>
+          <div style={{marginBottom:8,fontSize:11,color:"#3b5f7f"}}>
+            Sunucu IFC önizleme mesh'i: {ifcBim.previewMeshes||0} · Üçgen: {ifcBim.previewFaces||0}
+          </div>
+          <CadGlbPreview base64={ifcBim.previewGlbBase64}/>
         </div>}
 
         {builtFloors.length>0&&<div ref={previewAnchorRef} style={{marginTop:16,scrollMarginTop:18}}>

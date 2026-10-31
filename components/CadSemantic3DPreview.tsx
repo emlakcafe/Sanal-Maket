@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { CadSemanticAnalysis } from "@/lib/cad/semanticAnalyzer";
@@ -22,6 +22,28 @@ export default function CadSemantic3DPreview({
   unitScale:number;
 }){
   const ref=useRef<HTMLDivElement|null>(null);
+  const cameraRef=useRef<THREE.PerspectiveCamera|null>(null);
+  const controlsRef=useRef<OrbitControls|null>(null);
+  const boundsRef=useRef<THREE.Box3|null>(null);
+  const [ready,setReady]=useState(false);
+
+  function focusModel(mode:"iso"|"top"|"front"="iso"){
+    const camera=cameraRef.current;
+    const controls=controlsRef.current;
+    const box=boundsRef.current;
+    if(!camera||!controls||!box||box.isEmpty()) return;
+    const size=box.getSize(new THREE.Vector3());
+    const center=box.getCenter(new THREE.Vector3());
+    const radius=Math.max(size.x,size.z,size.y,10);
+    controls.target.copy(center);
+    if(mode==="top") camera.position.copy(center.clone().add(new THREE.Vector3(0,radius*1.7,0.01)));
+    else if(mode==="front") camera.position.copy(center.clone().add(new THREE.Vector3(0,radius*.45,radius*1.6)));
+    else camera.position.copy(center.clone().add(new THREE.Vector3(radius*.9,radius*.75,radius*1.1)));
+    camera.near=Math.max(.01,radius/5000);
+    camera.far=radius*100;
+    camera.updateProjectionMatrix();
+    controls.update();
+  }
 
   useEffect(()=>{
     const host=ref.current;
@@ -45,6 +67,13 @@ export default function CadSemantic3DPreview({
 
     const controls=new OrbitControls(camera,renderer.domElement);
     controls.enableDamping=true;
+    controls.enablePan=true;
+    controls.enableZoom=true;
+    controls.mouseButtons.LEFT=THREE.MOUSE.ROTATE;
+    controls.mouseButtons.MIDDLE=THREE.MOUSE.DOLLY;
+    controls.mouseButtons.RIGHT=THREE.MOUSE.PAN;
+    cameraRef.current=camera;
+    controlsRef.current=controls;
 
     const group=new THREE.Group();
     scene.add(group);
@@ -110,6 +139,7 @@ export default function CadSemantic3DPreview({
     }
 
     const box=new THREE.Box3().setFromObject(group);
+    boundsRef.current=box;
     if(!box.isEmpty()){
       const size=box.getSize(new THREE.Vector3());
       const center=box.getCenter(new THREE.Vector3());
@@ -120,6 +150,7 @@ export default function CadSemantic3DPreview({
       camera.far=radius*100;
       camera.updateProjectionMatrix();
       controls.update();
+      setReady(true);
       const grid=new THREE.GridHelper(radius*2,40,0x7f8c9d,0xcbd5e1);
       grid.position.y=0;
       scene.add(grid);
@@ -136,8 +167,31 @@ export default function CadSemantic3DPreview({
     const loop=()=>{controls.update();renderer.render(scene,camera);raf=requestAnimationFrame(loop);};
     loop();
 
-    return ()=>{cancelAnimationFrame(raf);ro.disconnect();controls.dispose();renderer.dispose();host.innerHTML="";};
+    return ()=>{setReady(false);cameraRef.current=null;controlsRef.current=null;boundsRef.current=null;cancelAnimationFrame(raf);ro.disconnect();controls.dispose();renderer.dispose();host.innerHTML="";};
   },[floors,wallThickness,unitScale]);
 
-  return <div ref={ref} style={{width:"100%",height:560,border:"1px solid #cbd5e1",borderRadius:12,overflow:"hidden"}}/>;
+  return <div style={{border:"1px solid #b8cce6",borderRadius:12,overflow:"hidden",background:"#fff"}}>
+    <div style={{display:"flex",gap:8,alignItems:"center",padding:"9px 10px",borderBottom:"1px solid #d7e2ef",background:"#f8fbff"}}>
+      <b style={{fontSize:12}}>Canlı 3D Önizleme</b>
+      <span style={{fontSize:10,color:"#6f8299"}}>Sol tuş: döndür · Tekerlek: zoom · Sağ tuş: pan</span>
+      <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+        <button type="button" onClick={()=>focusModel("iso")} disabled={!ready} style={previewBtn}>İzometrik</button>
+        <button type="button" onClick={()=>focusModel("top")} disabled={!ready} style={previewBtn}>Üstten</button>
+        <button type="button" onClick={()=>focusModel("front")} disabled={!ready} style={previewBtn}>Önden</button>
+      </div>
+    </div>
+    <div ref={ref} style={{width:"100%",height:620,overflow:"hidden",cursor:"grab"}}/>
+  </div>;
 }
+
+
+const previewBtn:React.CSSProperties={
+  border:"1px solid #aac0da",
+  background:"#fff",
+  color:"#174b86",
+  borderRadius:7,
+  padding:"7px 10px",
+  fontSize:11,
+  fontWeight:700,
+  cursor:"pointer"
+};

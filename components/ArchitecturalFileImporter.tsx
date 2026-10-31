@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { ACCEPTED_ARCHITECTURAL_EXTENSIONS, CAD_FORMATS, getCadFormat } from "@/lib/cad/formats";
-import { analyzeDxfText, type CadSemanticAnalysis, type CadSelectionRegion } from "@/lib/cad/semanticAnalyzer";
+import { type CadSemanticAnalysis, type CadSelectionRegion } from "@/lib/cad/semanticAnalyzer";
 
 const ThreeFilePreview = dynamic(
   () => import("@/components/Architectural3DPreview").then(m => m.ThreeFilePreview),
@@ -179,40 +179,55 @@ export default function ArchitecturalFileImporter(){
   async function createInteractiveModel(){
     if(!dxfText) return;
     if(!selection){
-      setMessage("Önce CAD ekranındaki '3D için alan seç' düğmesiyle yalnızca kat planını seçin.");
+      setMessage("Önce CAD ekranındaki '4 köşe ile plan seç' düğmesiyle kat planını seçin.");
       return;
     }
+
     setAnalysisBusy(true);
+    setAnalysis(null);
     setAnalysisProgress(5);
     setGenerationStage("1/6 · Seçilen plan alanı taranıyor");
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+
     try{
-      await new Promise(r=>setTimeout(r,120));
-      setAnalysisProgress(18);
-      setGenerationStage("2/6 · Duvar, kolon, kapı, pencere ve ölçüler ayrıştırılıyor");
-      const result=analyzeDxfText(dxfText,selection);
+      timer=setInterval(()=>{
+        setAnalysisProgress(prev=>{
+          const next=Math.min(88,prev+3);
+          if(next<22) setGenerationStage("1/6 · Seçilen plan alanı taranıyor");
+          else if(next<42) setGenerationStage("2/6 · Mimari elemanlar ayrıştırılıyor");
+          else if(next<58) setGenerationStage("3/6 · Zemin kat geometrisi hazırlanıyor");
+          else if(next<70) setGenerationStage("4/6 · Üst kat planı verileri aranıyor");
+          else if(next<82) setGenerationStage("5/6 · Çatı ve cephe verileri kontrol ediliyor");
+          else setGenerationStage("6/6 · 3D sahne hazırlanıyor");
+          return next;
+        });
+      },180);
 
-      await new Promise(r=>setTimeout(r,120));
-      setAnalysisProgress(42);
-      setGenerationStage("3/6 · Zemin kat geometrisi hazırlanıyor");
+      const res=await fetch("/api/cad/analyze",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({dxfText,selection})
+      });
 
-      await new Promise(r=>setTimeout(r,120));
-      setAnalysisProgress(60);
-      setGenerationStage("4/6 · Üst kat planları ve kat bilgileri aranıyor");
+      if(!res.ok){
+        const err=await res.json().catch(()=>({error:"CAD analizi basarisiz."}));
+        throw new Error(err.detail || err.error || "CAD analizi basarisiz.");
+      }
 
-      await new Promise(r=>setTimeout(r,120));
-      setAnalysisProgress(76);
-      setGenerationStage("5/6 · Çatı, kesit ve cephe verileri kontrol ediliyor");
+      const result=await res.json() as CadSemanticAnalysis;
 
-      setAnalysis(result);
-      await new Promise(r=>setTimeout(r,120));
+      if(timer){clearInterval(timer);timer=null;}
       setAnalysisProgress(92);
       setGenerationStage("6/6 · İnteraktif 360 sahne hazırlanıyor");
-
       await new Promise(r=>setTimeout(r,120));
+
+      setAnalysis(result);
       setAnalysisProgress(100);
       setGenerationStage("Tamamlandı");
-      setMessage("4 köşeli seçili kat planı analiz edildi. 3D model yalnızca projede okunabilen mimari verilerden oluşturuldu.");
+      setMessage("Seçilen kat planı server tarafında analiz edildi. 3D model yalnızca projede okunabilen mimari verilerden oluşturuldu.");
     }catch(e){
+      if(timer){clearInterval(timer);timer=null;}
       setMessage(e instanceof Error?e.message:String(e));
     }finally{
       setAnalysisBusy(false);

@@ -46,9 +46,14 @@ export default function ProfessionalDxfViewer({ text }:{ text:string }) {
         setError("");
         setProgress(2);
         setStatus("Projeniz hazırlanıyor...");
+        const fonts = [
+          "https://raw.githubusercontent.com/google/fonts/6c1dbe27dcf7d817d4b62cec033ba77fa8e2a5ec/ofl/notosans/NotoSans%5Bwdth,wght%5D.ttf",
+          "https://raw.githubusercontent.com/google/fonts/6c1dbe27dcf7d817d4b62cec033ba77fa8e2a5ec/ofl/notosanssymbols2/NotoSansSymbols2-Regular.ttf"
+        ];
+
         await viewer.Load({
           url,
-          fonts:[],
+          fonts,
           progressCbk:(phase:string,processed:number,total:number)=>{
             const phaseBase:Record<string,number>={fetch:8,parse:24,prepare:62,font:88};
             const base=phaseBase[phase] ?? 5;
@@ -76,7 +81,7 @@ export default function ProfessionalDxfViewer({ text }:{ text:string }) {
           viewer.FitView(b.minX,b.maxX,b.minY,b.maxY,0.06);
         }
         setProgress(100);
-        setStatus("Hazır · tekerlek ile yakınlaştır, sürükleyerek gez.");
+        setStatus("Hazır · CAD yazıları ve Türkçe karakterler yüklendi.");
         setLoading(false);
       }catch(e){
         const msg=e instanceof Error?e.message:String(e);

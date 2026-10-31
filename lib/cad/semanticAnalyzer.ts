@@ -37,6 +37,8 @@ export type CadSemanticAnalysis = {
   warnings: string[];
 };
 
+type Affine = {a:number;b:number;c:number;d:number;tx:number;ty:number};
+
 const RULES:Array<{kind:SemanticKind;tokens:string[]}> = [
   { kind:"wall", tokens:["DUVAR","WALL","A-WALL","MIM-DUVAR","MIM_DUVAR","MIMARI DUVAR"] },
   { kind:"column", tokens:["KOLON","COLUMN","COL","BETONARME KOLON"] },
@@ -95,6 +97,102 @@ function entityInsideRegion(e:SemanticEntity,region?:CadSelectionRegion|null){
   );
 }
 
+function identity():Affine{
+  return {a:1,b:0,c:0,d:1,tx:0,ty:0};
+}
+
+function multiply(p:Affine,q:Affine):Affine{
+  return {
+    a:p.a*q.a+p.c*q.b,
+    b:p.b*q.a+p.d*q.b,
+    c:p.a*q.c+p.c*q.d,
+    d:p.b*q.c+p.d*q.d,
+    tx:p.a*q.tx+p.c*q.ty+p.tx,
+    ty:p.b*q.tx+p.d*q.ty+p.ty
+  };
+}
+
+function apply(m:Affine,p:any){
+  const x=Number(p?.x||0), y=Number(p?.y||0);
+  return {x:m.a*x+m.c*y+m.tx,y:m.b*x+m.d*y+m.ty,z:Number(p?.z||0)};
+}
+
+function insertMatrix(insert:any, base:any):Affine{
+  const sx=Number.isFinite(Number(insert?.xScale))?Number(insert.xScale):1;
+  const sy=Number.isFinite(Number(insert?.yScale))?Number(insert.yScale):1;
+  const angle=(Number(insert?.rotation||0)*Math.PI)/180;
+  const cos=Math.cos(angle), sin=Math.sin(angle);
+  const bx=Number(base?.x||0), by=Number(base?.y||0);
+  const px=Number(insert?.position?.x||0), py=Number(insert?.position?.y||0);
+
+  const local:Affine={
+    a:cos*sx,b:sin*sx,
+    c:-sin*sy,d:cos*sy,
+    tx:px-(cos*sx*bx)+sin*sy*by,
+    ty:py-(sin*sx*bx)-cos*sy*by
+  };
+  return local;
+}
+
+function convertEntity(e:any, layerOverride:string|undefined, matrix:Affine):SemanticEntity|null{
+  const ownLayer=String(e?.layer||"0");
+  const layer=ownLayer==="0" && layerOverride ? layerOverride : ownLayer;
+  let {kind}=classifyLayer(layer);
+  const type=String(e?.type||"");
+
+  if((type==="TEXT"||type==="MTEXT") && kind==="unknown") kind="text";
+  if(type==="DIMENSION" && kind==="unknown") kind="dimension";
+
+  const se:SemanticEntity={type,layer,kind};
+
+  if(Array.isArray(e?.vertices)){
+    se.vertices=e.vertices.map((v:any)=>apply(matrix,v));
+  }else if(e?.start && e?.end){
+    se.vertices=[apply(matrix,e.start),apply(matrix,e.end)];
+  }
+
+  if(e?.center){
+    se.center=apply(matrix,e.center);
+  }else if((type==="TEXT"||type==="MTEXT") && e?.position){
+    se.center=apply(matrix,e.position);
+  }
+
+  if(Number.isFinite(Number(e?.radius))){
+    const sx=Math.hypot(matrix.a,matrix.b);
+    const sy=Math.hypot(matrix.c,matrix.d);
+    se.radius=Number(e.radius)*((sx+sy)/2);
+  }
+
+  const rawText=String(e?.text ?? e?.string ?? e?.textValue ?? "").trim();
+  if(rawText) se.text=rawText;
+
+  return se;
+}
+
+function expandEntities(doc:any){
+  const out:Array<{entity:any;layerOverride?:string;matrix:Affine}>=[];
+  const blocks=doc?.blocks||{};
+
+  const walk=(items:any[],parentMatrix:Affine,parentLayer?:string,depth=0)=>{
+    if(depth>12) return;
+    for(const e of items||[]){
+      if(String(e?.type||"")==="INSERT"){
+        const block=blocks?.[e.name];
+        if(!block?.entities?.length) continue;
+        const ownLayer=String(e.layer||"0");
+        const effectiveLayer=ownLayer==="0" ? parentLayer : ownLayer;
+        const m=multiply(parentMatrix,insertMatrix(e,block.position));
+        walk(block.entities,m,effectiveLayer,depth+1);
+      }else{
+        out.push({entity:e,layerOverride:parentLayer,matrix:parentMatrix});
+      }
+    }
+  };
+
+  walk(doc?.entities||[],identity(),undefined,0);
+  return out;
+}
+
 export function analyzeDxfText(text:string, selection?:CadSelectionRegion|null): CadSemanticAnalysis {
   const parser=new DxfParser();
   const doc:any=parser.parseSync(text);
@@ -106,46 +204,27 @@ export function analyzeDxfText(text:string, selection?:CadSelectionRegion|null):
   };
 
   let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
-  const addPt=(p:any)=>{
+  const addSelectedPoint=(p:any)=>{
     const x=Number(p?.x), y=Number(p?.y);
     if(!Number.isFinite(x)||!Number.isFinite(y)) return;
     minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);
   };
 
-  for(const e of doc?.entities||[]){
-    const layer=String(e.layer||"0");
-    layerCounts.set(layer,(layerCounts.get(layer)||0)+1);
-    let {kind}=classifyLayer(layer);
+  const expanded=expandEntities(doc);
 
-    const type=String(e.type||"");
-    if((type==="TEXT"||type==="MTEXT") && kind==="unknown") kind="text";
-    if(type==="DIMENSION" && kind==="unknown") kind="dimension";
+  for(const item of expanded){
+    const se=convertEntity(item.entity,item.layerOverride,item.matrix);
+    if(!se) continue;
 
-    const se:SemanticEntity={type,layer,kind};
-    if(Array.isArray(e.vertices)){
-      se.vertices=e.vertices.map((v:any)=>({x:Number(v.x||0),y:Number(v.y||0),z:Number(v.z||0)}));
-      se.vertices.forEach(addPt);
-    }
-    if(e.start && e.end){
-      se.vertices=[{x:Number(e.start.x||0),y:Number(e.start.y||0)},{x:Number(e.end.x||0),y:Number(e.end.y||0)}];
-      se.vertices.forEach(addPt);
-    }
-    if(e.center){
-      se.center={x:Number(e.center.x||0),y:Number(e.center.y||0),z:Number(e.center.z||0)};
-      addPt(e.center);
-    }
-    if(Number.isFinite(Number(e.radius))) se.radius=Number(e.radius);
+    layerCounts.set(se.layer,(layerCounts.get(se.layer)||0)+1);
 
-    const rawText=String(e.text ?? e.string ?? e.textValue ?? "").trim();
-    if(rawText){
-      se.text=rawText;
-      texts.push({layer,text:rawText});
-    }
+    if(!entityInsideRegion(se,selection)) continue;
 
-    if(entityInsideRegion(se,selection)){
-      counts[kind]++;
-      entities.push(se);
-    }
+    counts[se.kind]++;
+    entities.push(se);
+    se.vertices?.forEach(addSelectedPoint);
+    if(se.center) addSelectedPoint(se.center);
+    if(se.text) texts.push({layer:se.layer,text:se.text});
   }
 
   const layers=[...layerCounts.entries()].map(([name,entityCount])=>{
@@ -154,13 +233,20 @@ export function analyzeDxfText(text:string, selection?:CadSelectionRegion|null):
   }).sort((a,b)=>b.confidence-a.confidence || b.entityCount-a.entityCount);
 
   const warnings:string[]=[];
-  if(!layers.some(l=>l.kind==="wall")) warnings.push("Duvar katmanı otomatik olarak kesin tespit edilemedi.");
-  if(!layers.some(l=>l.kind==="door")) warnings.push("Kapı katmanı otomatik olarak kesin tespit edilemedi.");
-  if(!layers.some(l=>l.kind==="window")) warnings.push("Pencere katmanı otomatik olarak kesin tespit edilemedi.");
-  if(layers.filter(l=>l.kind==="unknown").length>0) warnings.push("Bazı katmanlar eşleştirilmedi; 3D üretimde bu katmanlar uydurulmayacak.");
+  if(entities.length===0){
+    warnings.push("Seçilen alanda modellenebilir CAD geometrisi bulunamadı.");
+  }
+  if(counts.wall===0) warnings.push("Seçilen planda duvar geometrisi bulunamadı.");
+  if(counts.column===0) warnings.push("Seçilen planda kolon geometrisi bulunamadı veya farklı katmandadır.");
+  if(counts.door===0) warnings.push("Seçilen planda kapı geometrisi bulunamadı veya farklı katmandadır.");
+  if(counts.window===0) warnings.push("Seçilen planda pencere geometrisi bulunamadı veya farklı katmandadır.");
+  if(layers.filter(l=>l.kind==="unknown").length>0) warnings.push("Bazı katmanlar eşleştirilmedi; 3D üretimde uydurulmayacak.");
 
   return {
-    layers,entities,counts,texts:texts.slice(0,5000),
+    layers,
+    entities,
+    counts,
+    texts:texts.slice(0,5000),
     bounds:Number.isFinite(minX)?{minX,minY,maxX,maxY}:null,
     warnings
   };

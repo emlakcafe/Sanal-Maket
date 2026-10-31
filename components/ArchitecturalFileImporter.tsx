@@ -145,6 +145,7 @@ export default function ArchitecturalFileImporter(){
   const [nextFloorIndex,setNextFloorIndex]=useState(1);
 
   const fmt=useMemo(()=>file?getCadFormat(file.name):null,[file]);
+  const displayedAnalysis=analysis ?? (builtFloors.length ? builtFloors[builtFloors.length-1].analysis : null);
 
   async function loadFile(next:File|null){
     if(objectUrl) URL.revokeObjectURL(objectUrl);
@@ -373,14 +374,14 @@ export default function ArchitecturalFileImporter(){
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,marginBottom:12}}>
             {[
-              ["Duvar",analysis.counts.wall],["Kolon",analysis.counts.column],["Kapı",analysis.counts.door],["Pencere",analysis.counts.window],
-              ["Merdiven",analysis.counts.stair],["Aks",analysis.counts.axis],["Ölçü",analysis.counts.dimension],["Metin",analysis.counts.text]
+              ["Duvar",displayedAnalysis?.counts.wall??0],["Kolon",displayedAnalysis?.counts.column??0],["Kapı",displayedAnalysis?.counts.door??0],["Pencere",displayedAnalysis?.counts.window??0],
+              ["Merdiven",displayedAnalysis?.counts.stair??0],["Aks",displayedAnalysis?.counts.axis??0],["Ölçü",displayedAnalysis?.counts.dimension??0],["Metin",displayedAnalysis?.counts.text??0]
             ].map(([label,value])=><div key={String(label)} style={{padding:10,border:"1px solid #d6e2ef",borderRadius:9,background:"#f8fbff"}}>
               <span style={{display:"block",fontSize:10,color:"#7187a3"}}>{label}</span><b style={{fontSize:18}}>{value}</b>
             </div>)}
           </div>
-          {analysis.warnings.length>0&&<div style={{padding:10,border:"1px solid #e9c77d",background:"#fff8e9",borderRadius:9,fontSize:11,lineHeight:1.5,marginBottom:12}}>
-            {analysis.warnings.map(w=><div key={w}>• {w}</div>)}
+          {displayedAnalysis&&displayedAnalysis.warnings.length>0&&<div style={{padding:10,border:"1px solid #e9c77d",background:"#fff8e9",borderRadius:9,fontSize:11,lineHeight:1.5,marginBottom:12}}>
+            {displayedAnalysis.warnings.map(w=><div key={w}>• {w}</div>)}
           </div>}
           <h2 style={{fontSize:20,margin:"10px 0"}}>Projeye Sadık 3D Teknik Önizleme</h2>
           <CadSemantic3DPreview floors={builtFloors} wallThickness={wallThickness} unitScale={unitMode==="mm"?.001:unitMode==="cm"?.01:1}/>

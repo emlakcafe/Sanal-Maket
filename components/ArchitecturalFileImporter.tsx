@@ -58,22 +58,22 @@ function openCadSessionDb():Promise<IDBDatabase>{
   });
 }
 
-async function saveCadSession(value:any){
+async function saveCadSession(value:any,key:string=CAD_SESSION_KEY){
   const db=await openCadSessionDb();
   await new Promise<void>((resolve,reject)=>{
     const tx=db.transaction(CAD_SESSION_STORE,"readwrite");
-    tx.objectStore(CAD_SESSION_STORE).put(value,CAD_SESSION_KEY);
+    tx.objectStore(CAD_SESSION_STORE).put(value,key);
     tx.oncomplete=()=>resolve();
     tx.onerror=()=>reject(tx.error);
   });
   db.close();
 }
 
-async function loadCadSession(){
+async function loadCadSession(key:string=CAD_SESSION_KEY){
   const db=await openCadSessionDb();
   const value=await new Promise<any>((resolve,reject)=>{
     const tx=db.transaction(CAD_SESSION_STORE,"readonly");
-    const req=tx.objectStore(CAD_SESSION_STORE).get(CAD_SESSION_KEY);
+    const req=tx.objectStore(CAD_SESSION_STORE).get(key);
     req.onsuccess=()=>resolve(req.result);
     req.onerror=()=>reject(req.error);
   });
@@ -198,6 +198,7 @@ export default function ArchitecturalFileImporter(){
   const [buildStep,setBuildStep]=useState<BuildStep>("ground-select");
   const [nextFloorIndex,setNextFloorIndex]=useState(1);
   const [projectAssembled,setProjectAssembled]=useState(false);
+  const [manualSnapshotAt,setManualSnapshotAt]=useState<string>("");
   const previewAnchorRef=useRef<HTMLDivElement|null>(null);
   const sessionHydratedRef=useRef(false);
 
@@ -220,6 +221,10 @@ export default function ArchitecturalFileImporter(){
           try{ setDxf(await parseDxf(saved.dxfText)); }catch{}
         }
         setMessage(saved.message || "Kaydedilmiş proje oturumu geri yüklendi.");
+        try{
+          const manual=await loadCadSession("manual-snapshot-v1");
+          if(manual?.savedAt) setManualSnapshotAt(new Date(manual.savedAt).toLocaleString("tr-TR"));
+        }catch{}
         try{ localStorage.removeItem("emlak-cafe-cad-project-session-v1"); }catch{}
       }catch{
         // IndexedDB unavailable: keep app usable without persistence.
@@ -251,6 +256,71 @@ export default function ArchitecturalFileImporter(){
 
   const fmt=useMemo(()=>file?getCadFormat(file.name):null,[file]);
   const displayedAnalysis=analysis ?? (builtFloors.length ? builtFloors[builtFloors.length-1].analysis : null);
+
+  function currentProjectSnapshot(){
+    return {
+      builtFloors,
+      buildStep,
+      nextFloorIndex,
+      projectAssembled,
+      unitMode,
+      floorHeight,
+      wallThickness,
+      dxfText,
+      message,
+      savedAt:new Date().toISOString()
+    };
+  }
+
+  async function applyProjectSnapshot(saved:any){
+    if(!saved) return;
+    if(Array.isArray(saved.builtFloors)) setBuiltFloors(saved.builtFloors);
+    if(saved.buildStep) setBuildStep(saved.buildStep);
+    if(Number.isFinite(saved.nextFloorIndex)) setNextFloorIndex(saved.nextFloorIndex);
+    if(typeof saved.projectAssembled==="boolean") setProjectAssembled(saved.projectAssembled);
+    if(saved.unitMode) setUnitMode(saved.unitMode);
+    if(Number.isFinite(saved.floorHeight)) setFloorHeight(saved.floorHeight);
+    if(Number.isFinite(saved.wallThickness)) setWallThickness(saved.wallThickness);
+    if(typeof saved.dxfText==="string"){
+      setDxfText(saved.dxfText);
+      if(saved.dxfText){
+        try{ setDxf(await parseDxf(saved.dxfText)); }catch{}
+      }else{
+        setDxf(null);
+      }
+    }
+    setSelection(null);
+    setAnalysis(null);
+    setMessage(saved.message || "Kaydedilmiş proje geri yüklendi.");
+  }
+
+  async function saveManualSnapshot(){
+    try{
+      const snapshot=currentProjectSnapshot();
+      await saveCadSession(snapshot,"manual-snapshot-v1");
+      const stamp=new Date(snapshot.savedAt).toLocaleString("tr-TR");
+      setManualSnapshotAt(stamp);
+      setMessage("Proje güvenli kayıt noktası oluşturuldu: "+stamp);
+    }catch(e){
+      setMessage("Proje kaydedilemedi: "+String(e instanceof Error?e.message:e));
+    }
+  }
+
+  async function restoreManualSnapshot(){
+    try{
+      const saved=await loadCadSession("manual-snapshot-v1");
+      if(!saved){
+        setMessage("Henüz manuel kaydedilmiş bir proje bulunmuyor.");
+        return;
+      }
+      await applyProjectSnapshot(saved);
+      const stamp=saved.savedAt?new Date(saved.savedAt).toLocaleString("tr-TR"):"";
+      setManualSnapshotAt(stamp);
+      setMessage("Son güvenli proje kaydı geri yüklendi"+(stamp?" · "+stamp:"")+".");
+    }catch(e){
+      setMessage("Proje geri yüklenemedi: "+String(e instanceof Error?e.message:e));
+    }
+  }
 
   async function loadFile(next:File|null){
     if(objectUrl) URL.revokeObjectURL(objectUrl);
@@ -534,6 +604,17 @@ export default function ArchitecturalFileImporter(){
         {dxfText&&<div style={{marginTop:14,padding:12,border:"1px solid #b8cce6",borderRadius:10,background:"#f8fbff"}}>
           <b style={{display:"block",fontSize:13,marginBottom:9}}>3D Model Ayarları</b>
           <div style={{fontSize:10,color:"#54708f",marginBottom:8}}>Proje oturumu IndexedDB'ye otomatik kaydedilir; büyük GLB katları, çatı ve CAD verisi sayfa yenilense bile geri yüklenir.</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
+            <button type="button" onClick={saveManualSnapshot} style={{
+              padding:"9px 8px",border:0,borderRadius:8,background:"#176be0",color:"#fff",fontWeight:800,cursor:"pointer",fontSize:11
+            }}>Projeyi Kaydet</button>
+            <button type="button" onClick={restoreManualSnapshot} style={{
+              padding:"9px 8px",border:"1px solid #9eb7d6",borderRadius:8,background:"#fff",color:"#174b86",fontWeight:800,cursor:"pointer",fontSize:11
+            }}>Son Kaydı Geri Yükle</button>
+          </div>
+          {manualSnapshotAt&&<div style={{fontSize:10,color:"#28653b",background:"#eaf7ef",padding:7,borderRadius:7,marginBottom:8}}>
+            Güvenli kayıt: {manualSnapshotAt}
+          </div>}
           <label style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>Kat yüksekliği (m)
             <input type="number" step=".05" min="2" max="8" value={floorHeight} onChange={e=>setFloorHeight(Number(e.target.value)||3)} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}/>
           </label>

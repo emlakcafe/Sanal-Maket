@@ -425,7 +425,7 @@ export default function ArchitecturalFileImporter(){
     setProjectAssembled(true);
     setBuildStep("complete");
     setGenerationStage("Katlar ve çatı birleştirildi");
-    setMessage("Katlar ve çatı tek proje sahnesinde birleştirildi. Şimdi birleşik modeli kontrol edin.");
+    setMessage(`Katlar ve çatı tek proje sahnesinde birleştirildi. Birleştirilen parça: ${parts.length}. Şimdi birleşik modeli kontrol edin.`);
     setTimeout(()=>previewAnchorRef.current?.scrollIntoView({behavior:"smooth",block:"start"}),60);
   }
 

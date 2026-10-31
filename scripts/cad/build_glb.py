@@ -49,46 +49,140 @@ def main():
         print(json.dumps({"error":"NO_WALLS","detail":"Reconstructed wall segments not found."}))
         return 3
 
-    wall_polys=[]
-    for w in wall_segments:
-        a=w.get("start") or {}
-        b=w.get("end") or {}
+    scene=trimesh.Scene()
+
+    wall_segments=analysis.get("wallSegments") or []
+    openings=analysis.get("openings") or []
+
+    wall_mesh_count=0
+    door_count=0
+    window_count=0
+    glass_count=0
+    wall_footprints=[]
+
+    def add_box(name,cx,cy,z0,length,thickness,height,angle,color):
+        nonlocal wall_mesh_count
+        if length<=0.02 or height<=0.02:
+            return
+        mesh=trimesh.creation.box(extents=[length,thickness,height])
+        ca=math.cos(angle); sa=math.sin(angle)
+        transform=np.array([
+            [ca,-sa,0,cx],
+            [sa, ca,0,cy],
+            [0,  0, 1,z0+height/2.0],
+            [0,  0, 0,1]
+        ],dtype=float)
+        mesh.apply_transform(transform)
+        mesh.visual.face_colors=color
+        scene.add_geometry(mesh,node_name=name,geom_name=name)
+        wall_mesh_count+=1
+
+    def add_panel(name,cx,cy,z0,width,depth,height,angle,color):
+        mesh=trimesh.creation.box(extents=[width,depth,height])
+        ca=math.cos(angle); sa=math.sin(angle)
+        transform=np.array([
+            [ca,-sa,0,cx],
+            [sa, ca,0,cy],
+            [0,  0, 1,z0+height/2.0],
+            [0,  0, 0,1]
+        ],dtype=float)
+        mesh.apply_transform(transform)
+        mesh.visual.face_colors=color
+        scene.add_geometry(mesh,node_name=name,geom_name=name)
+
+    for wi,w in enumerate(wall_segments):
+        a=w.get("start") or {}; b=w.get("end") or {}
         ax=float(a.get("x",0))*unit_scale
         ay=float(a.get("y",0))*unit_scale
         bx=float(b.get("x",0))*unit_scale
         by=float(b.get("y",0))*unit_scale
         thickness=max(0.08,min(0.45,float(w.get("thickness",0))*unit_scale))
-        length=math.hypot(bx-ax,by-ay)
+        dx=bx-ax; dy=by-ay
+        length=math.hypot(dx,dy)
         if length<0.35 or length>30:
             continue
-        wall_polys.append(
-            LineString([(ax,ay),(bx,by)]).buffer(
-                thickness/2.0,
-                cap_style=2,
-                join_style=2
-            )
+        angle=math.atan2(dy,dx)
+        ux=dx/length; uy=dy/length
+
+        wall_footprints.append(
+            LineString([(ax,ay),(bx,by)]).buffer(thickness/2.0,cap_style=2,join_style=2)
         )
 
-    if not wall_polys:
-        print(json.dumps({"error":"NO_VALID_WALLS","detail":"No valid wall polygons generated."}))
-        return 4
+        wall_ops=[o for o in openings if int(o.get("wallIndex",-1))==wi]
+        intervals=[]
+        for o in wall_ops:
+            station=max(0.0,min(length,float(o.get("t",0))*length))
+            width=max(0.45,min(float(o.get("width",0.9)),length))
+            left=max(0.0,station-width/2.0)
+            right=min(length,station+width/2.0)
+            if right-left<0.30:
+                continue
+            intervals.append((left,right,o))
 
-    wall_union=unary_union(wall_polys).buffer(0)
-    wall_meshes=[]
-    for poly in as_poly_list(wall_union):
-        if poly.area<0.02:
-            continue
-        mesh=trimesh.creation.extrude_polygon(poly,height=floor_height)
-        wall_meshes.append(mesh)
+        bounds={0.0,length}
+        for left,right,_ in intervals:
+            bounds.add(left);bounds.add(right)
+        cuts=sorted(bounds)
 
-    if not wall_meshes:
-        print(json.dumps({"error":"WALL_MESH_FAILED","detail":"Wall polygons could not be extruded."}))
+        for si in range(len(cuts)-1):
+            x0,x1=cuts[si],cuts[si+1]
+            seg_len=x1-x0
+            if seg_len<=0.02:
+                continue
+            mid=(x0+x1)/2.0
+            cover=None
+            for left,right,o in intervals:
+                if left<=mid<=right:
+                    cover=o
+                    break
+
+            cx=ax+ux*mid
+            cy=ay+uy*mid
+
+            if cover is None:
+                add_box(
+                    f"wall_{wi}_{si}",cx,cy,0.0,seg_len,thickness,floor_height,angle,
+                    [225,222,216,255]
+                )
+                continue
+
+            kind=cover.get("kind")
+            if kind=="door":
+                door_count+=1
+                door_h=min(2.15,max(1.95,floor_height-0.25))
+                if floor_height>door_h:
+                    add_box(
+                        f"door_header_{wi}_{si}",cx,cy,door_h,seg_len,thickness,
+                        floor_height-door_h,angle,[225,222,216,255]
+                    )
+                # thin door leaf, slightly recessed from wall thickness
+                add_panel(
+                    f"door_leaf_{wi}_{si}",cx,cy,0.0,seg_len*0.94,max(0.035,thickness*0.18),
+                    door_h,angle,[132,91,60,255]
+                )
+            elif kind=="window":
+                window_count+=1
+                sill=min(0.90,max(0.60,floor_height*0.30))
+                head=min(2.20,max(sill+0.80,floor_height*0.76))
+                add_box(
+                    f"window_sill_{wi}_{si}",cx,cy,0.0,seg_len,thickness,sill,angle,
+                    [225,222,216,255]
+                )
+                if floor_height>head:
+                    add_box(
+                        f"window_head_{wi}_{si}",cx,cy,head,seg_len,thickness,
+                        floor_height-head,angle,[225,222,216,255]
+                    )
+                glass_h=max(0.45,head-sill)
+                add_panel(
+                    f"glass_{wi}_{si}",cx,cy,sill,seg_len*0.92,max(0.018,thickness*0.08),
+                    glass_h,angle,[102,174,205,150]
+                )
+                glass_count+=1
+
+    if wall_mesh_count==0:
+        print(json.dumps({"error":"WALL_MESH_FAILED","detail":"Wall/opening meshes could not be generated."}))
         return 5
-
-    scene=trimesh.Scene()
-    for i,m in enumerate(wall_meshes):
-        m.visual.face_colors=[225,222,216,255]
-        scene.add_geometry(m,node_name=f"wall_{i}",geom_name=f"wall_{i}")
 
     # Columns: only reliable closed/polyline/circle-like entities.
     col_index=0
@@ -120,8 +214,8 @@ def main():
             scene.add_geometry(mesh,node_name=f"column_{col_index}",geom_name=f"column_{col_index}")
             col_index+=1
 
-    # Thin slab under the wall footprint; use wall union envelope rather than selection rectangle.
-    footprint=wall_union.buffer(0.10).buffer(0)
+    # Thin slab under the wall footprint; use reconstructed wall footprint rather than selection rectangle.
+    footprint=unary_union(wall_footprints).buffer(0.10).buffer(0)
     for i,poly in enumerate(as_poly_list(footprint)):
         if poly.area<0.1:
             continue
@@ -137,7 +231,10 @@ def main():
     result={
         "ok":True,
         "bytes":len(glb),
-        "wallPolygons":len(wall_meshes),
+        "wallPolygons":wall_mesh_count,
+        "doors":door_count,
+        "windows":window_count,
+        "glassPanels":glass_count,
         "columns":col_index,
         "bounds":bounds
     }

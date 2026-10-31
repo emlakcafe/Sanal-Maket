@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { ACCEPTED_ARCHITECTURAL_EXTENSIONS, CAD_FORMATS, getCadFormat } from "@/lib/cad/formats";
-import { analyzeDxfText, type CadSemanticAnalysis, type CadSelectionBounds } from "@/lib/cad/semanticAnalyzer";
+import { analyzeDxfText, type CadSemanticAnalysis, type CadSelectionRegion } from "@/lib/cad/semanticAnalyzer";
 
 const ThreeFilePreview = dynamic(
   () => import("@/components/Architectural3DPreview").then(m => m.ThreeFilePreview),
@@ -128,7 +128,8 @@ export default function ArchitecturalFileImporter(){
   const [analysisProgress,setAnalysisProgress]=useState(0);
   const [floorHeight,setFloorHeight]=useState(3.0);
   const [wallThickness,setWallThickness]=useState(0.20);
-  const [selection,setSelection]=useState<CadSelectionBounds|null>(null);
+  const [selection,setSelection]=useState<CadSelectionRegion|null>(null);
+  const [generationStage,setGenerationStage]=useState("Hazır");
   const [unitMode,setUnitMode]=useState<"mm"|"cm"|"m">("mm");
 
   const fmt=useMemo(()=>file?getCadFormat(file.name):null,[file]);
@@ -182,17 +183,35 @@ export default function ArchitecturalFileImporter(){
       return;
     }
     setAnalysisBusy(true);
-    setAnalysisProgress(8);
+    setAnalysisProgress(5);
+    setGenerationStage("1/6 · Seçilen plan alanı taranıyor");
     try{
-      await new Promise(r=>setTimeout(r,80));
-      setAnalysisProgress(28);
+      await new Promise(r=>setTimeout(r,120));
+      setAnalysisProgress(18);
+      setGenerationStage("2/6 · Duvar, kolon, kapı, pencere ve ölçüler ayrıştırılıyor");
       const result=analyzeDxfText(dxfText,selection);
-      await new Promise(r=>setTimeout(r,80));
-      setAnalysisProgress(72);
+
+      await new Promise(r=>setTimeout(r,120));
+      setAnalysisProgress(42);
+      setGenerationStage("3/6 · Zemin kat geometrisi hazırlanıyor");
+
+      await new Promise(r=>setTimeout(r,120));
+      setAnalysisProgress(60);
+      setGenerationStage("4/6 · Üst kat planları ve kat bilgileri aranıyor");
+
+      await new Promise(r=>setTimeout(r,120));
+      setAnalysisProgress(76);
+      setGenerationStage("5/6 · Çatı, kesit ve cephe verileri kontrol ediliyor");
+
       setAnalysis(result);
-      await new Promise(r=>setTimeout(r,80));
+      await new Promise(r=>setTimeout(r,120));
+      setAnalysisProgress(92);
+      setGenerationStage("6/6 · İnteraktif 360 sahne hazırlanıyor");
+
+      await new Promise(r=>setTimeout(r,120));
       setAnalysisProgress(100);
-      setMessage("Seçilen kat planı analiz edildi. Kesit/görünüşler dışarıda bırakıldı ve tanınan elemanlardan 3D teknik model oluşturuldu.");
+      setGenerationStage("Tamamlandı");
+      setMessage("4 köşeli seçili kat planı analiz edildi. 3D model yalnızca projede okunabilen mimari verilerden oluşturuldu.");
     }catch(e){
       setMessage(e instanceof Error?e.message:String(e));
     }finally{
@@ -208,14 +227,23 @@ export default function ArchitecturalFileImporter(){
       <div style={{width:"min(560px,84vw)",textAlign:"center",color:"#fff"}}>
         <div style={{fontSize:12,letterSpacing:".22em",color:"#79b6ff",marginBottom:10}}>EMLAK CAFE AI</div>
         <div style={{fontSize:34,fontWeight:900,marginBottom:8}}>3D model hazırlanıyor</div>
-        <div style={{fontSize:13,color:"#b7cbe0",marginBottom:18}}>
-          {analysisProgress<30?"Seçilen kat planı okunuyor":analysisProgress<70?"Duvar, kolon, kapı ve pencere verileri ayrıştırılıyor":"3D geometri oluşturuluyor"}
-        </div>
+        <div style={{fontSize:13,color:"#b7cbe0",marginBottom:18}}>{generationStage}</div>
         <div style={{height:13,borderRadius:99,overflow:"hidden",background:"#18334f",border:"1px solid #315d88"}}>
           <div style={{height:"100%",width:`${analysisProgress}%`,background:"linear-gradient(90deg,#1268e8,#65b8ff)",transition:"width .2s ease"}}/>
         </div>
         <div style={{fontSize:24,fontWeight:900,marginTop:9}}>%{analysisProgress}</div>
-        <div style={{fontSize:11,color:"#7e9ab6",marginTop:14}}>Çizimde bulunmayan mimari bilgi üretilmez.</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginTop:16,textAlign:"left"}}>
+          {[
+            ["1","Plan tarama",5],["2","Mimari ayrıştırma",18],["3","Zemin kat",42],
+            ["4","Üst katlar",60],["5","Çatı + cephe",76],["6","360 sahne",92]
+          ].map(([no,label,at])=><div key={String(no)} style={{
+            padding:"8px",borderRadius:8,
+            border:"1px solid "+(analysisProgress>=Number(at)?"#3d7fc4":"#24415d"),
+            background:analysisProgress>=Number(at)?"#102f4d":"#0b2238",
+            color:analysisProgress>=Number(at)?"#fff":"#7892ad",fontSize:10
+          }}><b>{no}.</b> {label}</div>)}
+        </div>
+        <div style={{fontSize:11,color:"#7e9ab6",marginTop:14}}>Projede bulunmayan kat, çatı veya cephe bilgisi uydurulmaz; eksik olarak işaretlenir.</div>
       </div>
     </div>}
     <header style={{display:"flex",justifyContent:"space-between",gap:16,alignItems:"flex-end",marginBottom:18}}>
@@ -267,7 +295,7 @@ export default function ArchitecturalFileImporter(){
 
       <section style={{background:"#fff",border:"1px solid #bfd1ea",borderRadius:14,padding:14,minWidth:0}}>
         {!file&&<div style={{minHeight:560,display:"grid",placeItems:"center",color:"#7a8da7"}}>DWG, DXF, IFC veya 3B proje dosyanızı seçin.</div>}
-        {dxfText&&<ProfessionalDxfViewer text={dxfText} onSelection={bounds=>{setSelection(bounds);setAnalysis(null);setMessage("3D üretim alanı seçildi. Şimdi İnteraktif 360 Sanal Maketini Oluştur butonuna basın.");}}/>}
+        {dxfText&&<ProfessionalDxfViewer text={dxfText} onSelection={region=>{setSelection(region);setAnalysis(null);setMessage("4 köşeli plan alanı seçildi ve mavi tarama ile kilitlendi. Şimdi İnteraktif 360 Sanal Maketini Oluştur butonuna basın.");}}/>}
         {analysis&&<div style={{marginTop:16}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,marginBottom:12}}>
             {[

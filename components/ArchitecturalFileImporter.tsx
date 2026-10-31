@@ -27,6 +27,8 @@ type BuiltFloor = {
     windows?:number;
     glassPanels?:number;
     columns?:number;
+    roofPolygons?:number;
+    roofArea?:number;
     bounds?:number[][];
   };
 };
@@ -297,6 +299,82 @@ export default function ArchitecturalFileImporter(){
     }
   }
 
+  async function createRoof(){
+    if(!dxfText) return;
+    if(!selection){
+      setMessage("Önce çatı planını sürükleyerek seçin.");
+      return;
+    }
+
+    setAnalysisBusy(true);
+    setAnalysis(null);
+    setAnalysisProgress(8);
+    setGenerationStage("Çatı planı okunuyor");
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+    try{
+      timer=setInterval(()=>setAnalysisProgress(prev=>Math.min(82,prev+4)),180);
+
+      const res=await fetch("/api/cad/analyze",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({dxfText,selection,unitMode})
+      });
+      if(!res.ok){
+        const err=await res.json().catch(()=>({error:"Çatı CAD analizi başarısız."}));
+        throw new Error(err.detail || err.error || "Çatı CAD analizi başarısız.");
+      }
+      const result=await res.json() as CadSemanticAnalysis;
+      if(timer){clearInterval(timer);timer=null;}
+
+      setAnalysisProgress(88);
+      setGenerationStage("Çatı konturu ayrıştırılıyor");
+
+      const roofRes=await fetch("/api/cad/build-roof",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({analysis:result})
+      });
+      if(!roofRes.ok){
+        const err=await roofRes.json().catch(()=>({error:"Çatı GLB üretimi başarısız."}));
+        throw new Error(err.detail || err.error || "Çatı GLB üretimi başarısız.");
+      }
+      const roof=await roofRes.json();
+
+      setAnalysisProgress(97);
+      setGenerationStage("Çatı GLB önizlemesi hazırlanıyor");
+
+      const elevation=builtFloors.reduce((sum,f)=>sum+f.height+0.18,0);
+      const roofItem:BuiltFloor={
+        name:"Çatı",
+        analysis:result,
+        elevation,
+        height:0.24,
+        glbBase64:roof.glbBase64,
+        glbMeta:{
+          bytes:roof.bytes,
+          roofPolygons:roof.roofPolygons,
+          roofArea:roof.roofArea,
+          bounds:roof.bounds
+        }
+      };
+
+      setBuiltFloors(prev=>[...prev,roofItem]);
+      setAnalysis(result);
+      setAnalysisProgress(100);
+      setGenerationStage("Çatı tamamlandı");
+      setSelection(null);
+      setBuildStep("facade-select");
+      setMessage("Çatı modeli tamamlandı. Sonraki aşama: cephe/görünüş planlarını seçerek dış cepheyi oluşturma.");
+      setTimeout(()=>previewAnchorRef.current?.scrollIntoView({behavior:"smooth",block:"start"}),60);
+    }catch(e){
+      if(timer){clearInterval(timer);timer=null;}
+      setMessage(e instanceof Error?e.message:String(e));
+    }finally{
+      setAnalysisBusy(false);
+    }
+  }
+
   function requestUpperFloor(){
     setSelection(null);
     setAnalysis(null);
@@ -364,8 +442,20 @@ export default function ArchitecturalFileImporter(){
           </label>
           <div style={{fontSize:10,padding:8,borderRadius:7,background:selection?"#eaf7ef":"#fff3df",color:selection?"#28653b":"#8a5a13",marginBottom:10}}>
             {selection
-              ? (buildStep==="ground-select" ? "Zemin kat planı seçildi." : "Üst kat planı seçildi.")
-              : (buildStep==="ground-select" ? "Zemin kat planını sürükleyerek seçin." : buildStep==="upper-select" ? `${nextFloorIndex}. kat planını sürükleyerek seçin.` : "Mevcut kat modellemesi tamamlandı.")}
+              ? (buildStep==="ground-select"
+                  ? "Zemin kat planı seçildi."
+                  : buildStep==="roof-select"
+                    ? "Çatı planı seçildi."
+                    : "Üst kat planı seçildi.")
+              : (buildStep==="ground-select"
+                  ? "Zemin kat planını sürükleyerek seçin."
+                  : buildStep==="upper-select"
+                    ? `${nextFloorIndex}. kat planını sürükleyerek seçin.`
+                    : buildStep==="roof-select"
+                      ? "Çatı planını sürükleyerek seçin."
+                      : buildStep==="facade-select"
+                        ? "Çatı tamamlandı. Cephe aşaması hazır."
+                        : "Mevcut kat modellemesi tamamlandı.")}
           </div>
 
           {(buildStep==="ground-select"||buildStep==="upper-select")&&<button type="button" onClick={createCurrentFloor} disabled={analysisBusy||!selection} style={{
@@ -381,8 +471,19 @@ export default function ArchitecturalFileImporter(){
             }}>Katları Tamamla → Çatı Aşaması</button>
           </div>}
 
-          {buildStep==="roof-select"&&<div style={{padding:10,borderRadius:9,background:"#fff3df",fontSize:11,color:"#7c5514"}}>
-            Katlar tamamlandı. Sonraki geliştirmede çatı planı seçimi bu aşamadan başlayacak.
+          {buildStep==="roof-select"&&<div style={{display:"grid",gap:8}}>
+            <div style={{padding:9,borderRadius:8,background:"#fff3df",fontSize:11,color:"#7c5514"}}>
+              Çatı planını sürükleyerek seçin. Seçim tamamlanınca aşağıdaki buton aktifleşir.
+            </div>
+            <button type="button" onClick={createRoof} disabled={analysisBusy||!selection} style={{
+              width:"100%",padding:"12px 10px",border:0,borderRadius:9,
+              background:selection?"#176be0":"#9db6d5",color:"#fff",
+              fontWeight:800,cursor:selection?"pointer":"not-allowed"
+            }}>{analysisBusy?`Emlak Cafe AI işliyor · %${analysisProgress}`:"Çatıyı Oluştur"}</button>
+          </div>}
+
+          {buildStep==="facade-select"&&<div style={{padding:10,borderRadius:9,background:"#eaf7ef",fontSize:11,color:"#28653b"}}>
+            Çatı tamamlandı. Sıradaki aşama: cephe/görünüş planlarından dış cephe modelleme.
           </div>}
 
           <div style={{fontSize:10,color:"#7187a3",marginTop:8,lineHeight:1.4}}>Her kat ayrı ayrı tamamlanır; sonraki kat ancak kullanıcı seçtikten sonra eklenir.</div>
@@ -400,7 +501,9 @@ export default function ArchitecturalFileImporter(){
         {!file&&<div style={{minHeight:560,display:"grid",placeItems:"center",color:"#7a8da7"}}>DWG, DXF, IFC veya 3B proje dosyanızı seçin.</div>}
         {dxfText&&<ProfessionalDxfViewer text={dxfText} onSelection={region=>{
           if(buildStep==="roof-select"){
-            setMessage("Çatı planı seçildi. Çatı modelleme motoru sonraki aşamada bu seçimi kullanacak.");
+            setSelection(region);
+            setAnalysis(null);
+            setMessage("Çatı planı seçildi. Şimdi Çatıyı Oluştur butonuna basın.");
             return;
           }
           setSelection(region);
@@ -420,7 +523,11 @@ export default function ArchitecturalFileImporter(){
             </div>}
             {builtFloors.map((f,i)=><div key={f.name} style={{padding:"8px 10px",borderRadius:8,background:"#eaf4ff",border:"1px solid #b9d2ef",fontSize:11}}>
               <b>{f.name}</b><br/>Kot: {f.elevation.toFixed(2)} m · Yükseklik: {f.height.toFixed(2)} m
-              {f.glbMeta&&<><br/><span style={{color:"#58718e"}}>GLB: {Math.round((f.glbMeta.bytes||0)/1024)} KB · Duvar mesh: {f.glbMeta.wallPolygons||0} · Kapı: {f.glbMeta.doors||0} · Pencere: {f.glbMeta.windows||0} · Cam: {f.glbMeta.glassPanels||0}</span></>}
+              {f.glbMeta&&<><br/><span style={{color:"#58718e"}}>
+                {f.name==="Çatı"
+                  ? `GLB: ${Math.round((f.glbMeta.bytes||0)/1024)} KB · Çatı poligonu: ${f.glbMeta.roofPolygons||0} · Alan: ${(f.glbMeta.roofArea||0).toFixed(1)} m²`
+                  : `GLB: ${Math.round((f.glbMeta.bytes||0)/1024)} KB · Duvar mesh: ${f.glbMeta.wallPolygons||0} · Kapı: ${f.glbMeta.doors||0} · Pencere: ${f.glbMeta.windows||0} · Cam: ${f.glbMeta.glassPanels||0}`}
+              </span></>}
             </div>)}
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,marginBottom:12}}>

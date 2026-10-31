@@ -23,6 +23,9 @@ type BuiltFloor = {
   glbMeta?:{
     bytes?:number;
     wallPolygons?:number;
+    doors?:number;
+    windows?:number;
+    glassPanels?:number;
     columns?:number;
     bounds?:number[][];
   };
@@ -261,6 +264,9 @@ export default function ArchitecturalFileImporter(){
         glbMeta:{
           bytes:glb.bytes,
           wallPolygons:glb.wallPolygons,
+          doors:glb.doors,
+          windows:glb.windows,
+          glassPanels:glb.glassPanels,
           columns:glb.columns,
           bounds:glb.bounds
         }
@@ -410,10 +416,11 @@ export default function ArchitecturalFileImporter(){
             </div>}
             {displayedAnalysis?.reconstruction&&<div style={{padding:"8px 10px",borderRadius:8,background:"#eef6ff",border:"1px solid #b7cde8",fontSize:11,color:"#244f7b"}}>
               <b>Duvar Rekonstrüksiyonu:</b> Ham {displayedAnalysis.reconstruction.rawWallEntityCount} → Gerçek {displayedAnalysis.reconstruction.wallSegmentCount}
+              <br/><span>Kapı açıklığı: {displayedAnalysis.reconstruction.doorOpeningCount??0} · Pencere açıklığı: {displayedAnalysis.reconstruction.windowOpeningCount??0}</span>
             </div>}
             {builtFloors.map((f,i)=><div key={f.name} style={{padding:"8px 10px",borderRadius:8,background:"#eaf4ff",border:"1px solid #b9d2ef",fontSize:11}}>
               <b>{f.name}</b><br/>Kot: {f.elevation.toFixed(2)} m · Yükseklik: {f.height.toFixed(2)} m
-              {f.glbMeta&&<><br/><span style={{color:"#58718e"}}>GLB: {Math.round((f.glbMeta.bytes||0)/1024)} KB · Duvar poligonu: {f.glbMeta.wallPolygons||0}</span></>}
+              {f.glbMeta&&<><br/><span style={{color:"#58718e"}}>GLB: {Math.round((f.glbMeta.bytes||0)/1024)} KB · Duvar mesh: {f.glbMeta.wallPolygons||0} · Kapı: {f.glbMeta.doors||0} · Pencere: {f.glbMeta.windows||0} · Cam: {f.glbMeta.glassPanels||0}</span></>}
             </div>)}
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,marginBottom:12}}>

@@ -119,7 +119,11 @@ def main():
         ux=dx/length; uy=dy/length
 
         wall_footprints.append(
-            LineString([(ax,ay),(bx,by)]).buffer(thickness/2.0,cap_style=2,join_style=2)
+            LineString([(ax,ay),(bx,by)]).buffer(
+                thickness/2.0 + 0.015,
+                cap_style=2,
+                join_style=2
+            )
         )
 
         wall_ops=[o for o in openings if int(o.get("wallIndex",-1))==wi]
@@ -229,7 +233,7 @@ def main():
             col_index+=1
 
     # Thin slab under the wall footprint; use reconstructed wall footprint rather than selection rectangle.
-    footprint=unary_union(wall_footprints).buffer(0.10).buffer(0)
+    footprint=unary_union(wall_footprints).buffer(0.06).buffer(-0.045).buffer(0)
     for i,poly in enumerate(as_poly_list(footprint)):
         if poly.area<0.1:
             continue

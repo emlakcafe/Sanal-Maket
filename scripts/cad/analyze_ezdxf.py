@@ -176,80 +176,102 @@ def reconstruct_walls(entities, unit_scale):
         if item.get("kind")!="wall":
             continue
         for a,b,length in segments_from_entity(item):
-            if length*unit_scale < 0.35:
+            length_m=length*unit_scale
+            if length_m < 0.25 or length_m > 40.0:
                 continue
             angle=math.atan2(b["y"]-a["y"],b["x"]-a["x"])
-            raw.append({"a":a,"b":b,"length":length,"angle":angle,"layer":item.get("layer","")})
+            raw.append({
+                "a":a,"b":b,"length":length,"angle":angle,
+                "layer":item.get("layer","")
+            })
 
-    min_thick=max(0.08/unit_scale,1e-6)
-    max_thick=max(0.40/unit_scale,min_thick*1.1)
-    max_angle=math.radians(4.0)
+    min_thick=max(0.07/unit_scale,1e-6)
+    max_thick=max(0.45/unit_scale,min_thick*1.1)
+    max_angle=math.radians(5.0)
 
-    candidates=[]
+    walls=[]
+
     for i in range(len(raw)):
         s1=raw[i]
-        line1=LineString([(s1["a"]["x"],s1["a"]["y"]),(s1["b"]["x"],s1["b"]["y"])])
+        ax=float(s1["a"]["x"]); ay=float(s1["a"]["y"])
+        bx=float(s1["b"]["x"]); by=float(s1["b"]["y"])
+        dx=bx-ax; dy=by-ay
+        length=s1["length"]
+        if length<=1e-9:
+            continue
+
+        ux=dx/length; uy=dy/length
+        nx=-uy; ny=ux
+
         for j in range(i+1,len(raw)):
             s2=raw[j]
             if angle_diff(s1["angle"],s2["angle"])>max_angle:
                 continue
-            overlap=segment_projection_overlap(s1["a"],s1["b"],s2["a"],s2["b"])
-            if overlap*unit_scale < 0.45:
+
+            # Project second segment endpoints onto first segment axis.
+            def proj(p):
+                return (float(p["x"])-ax)*ux + (float(p["y"])-ay)*uy
+
+            p1=proj(s2["a"])
+            p2=proj(s2["b"])
+            lo=max(0.0,min(p1,p2))
+            hi=min(length,max(p1,p2))
+            overlap=hi-lo
+
+            if overlap*unit_scale < 0.30:
                 continue
-            if overlap / max(1e-9,min(s1["length"],s2["length"])) < 0.35:
-                continue
-            line2=LineString([(s2["a"]["x"],s2["a"]["y"]),(s2["b"]["x"],s2["b"]["y"])])
-            dist=line1.distance(line2)
+
+            # Perpendicular distance between the two parallel lines.
+            mx2=(float(s2["a"]["x"])+float(s2["b"]["x"]))/2.0
+            my2=(float(s2["a"]["y"])+float(s2["b"]["y"]))/2.0
+            dist=abs((mx2-ax)*nx + (my2-ay)*ny)
+
             if dist < min_thick or dist > max_thick:
                 continue
-            score=dist + abs(s1["length"]-s2["length"])*0.02
-            candidates.append((score,i,j,dist))
 
-    candidates.sort(key=lambda x:x[0])
-    used=set()
-    walls=[]
-    for _,i,j,dist in candidates:
-        if i in used or j in used:
-            continue
-        s1,s2=raw[i],raw[j]
-        b1,b2=orient_like(s1["a"],s1["b"],s2["a"],s2["b"])
-        start=avg_point(s1["a"],b1)
-        end=avg_point(s1["b"],b2)
-        length=math.hypot(end["x"]-start["x"],end["y"]-start["y"])
-        if length*unit_scale < 0.45:
-            continue
-        walls.append({
-            "start":start,
-            "end":end,
-            "thickness":dist,
-            "length":length,
-            "sourceLayers":[s1["layer"],s2["layer"]]
-        })
-        used.add(i); used.add(j)
+            # Midline over only the shared overlap interval.
+            side=1.0 if ((mx2-ax)*nx + (my2-ay)*ny) >= 0 else -1.0
+            offset=dist*0.5*side
 
+            sx=ax+ux*lo + nx*offset
+            sy=ay+uy*lo + ny*offset
+            ex=ax+ux*hi + nx*offset
+            ey=ay+uy*hi + ny*offset
+
+            seg_len=math.hypot(ex-sx,ey-sy)
+            if seg_len*unit_scale < 0.30:
+                continue
+
+            walls.append({
+                "start":{"x":sx,"y":sy,"z":0.0},
+                "end":{"x":ex,"y":ey,"z":0.0},
+                "thickness":dist,
+                "length":seg_len,
+                "sourceLayers":[s1["layer"],s2["layer"]]
+            })
+
+    # Deduplicate near-identical overlap segments, but DO NOT globally lock raw CAD lines:
+    # a long wall edge may legitimately pair with multiple opposite fragments.
     dedup=[]
     seen=set()
     for w in walls:
         sx,sy=w["start"]["x"],w["start"]["y"]
         ex,ey=w["end"]["x"],w["end"]["y"]
-        mx=(sx+ex)/2.0; my=(sy+ey)/2.0
-        ang=normalize_angle(math.atan2(ey-sy,ex-sx))
+        if (ex < sx) or (abs(ex-sx)<1e-9 and ey<sy):
+            sx,sy,ex,ey=ex,ey,sx,sy
         key=(
-            round(mx*unit_scale,2),
-            round(my*unit_scale,2),
-            round(ang,2),
-            round(w["thickness"]*unit_scale,2),
-            round(w["length"]*unit_scale,2)
+            round(sx*unit_scale,2),
+            round(sy*unit_scale,2),
+            round(ex*unit_scale,2),
+            round(ey*unit_scale,2),
+            round(w["thickness"]*unit_scale,2)
         )
         if key in seen:
             continue
         seen.add(key)
-        if w["length"]*unit_scale > 25.0:
-            continue
         dedup.append(w)
 
     return dedup
-
 
 def point_seg_distance(px,py,ax,ay,bx,by):
     vx=bx-ax; vy=by-ay

@@ -181,8 +181,8 @@ def reconstruct_walls(entities, unit_scale):
             angle=math.atan2(b["y"]-a["y"],b["x"]-a["x"])
             raw.append({"a":a,"b":b,"length":length,"angle":angle,"layer":item.get("layer","")})
 
-    min_thick=max(0.06/unit_scale,1e-6)
-    max_thick=max(0.60/unit_scale,min_thick*1.1)
+    min_thick=max(0.08/unit_scale,1e-6)
+    max_thick=max(0.40/unit_scale,min_thick*1.1)
     max_angle=math.radians(4.0)
 
     candidates=[]
@@ -227,7 +227,28 @@ def reconstruct_walls(entities, unit_scale):
         })
         used.add(i); used.add(j)
 
-    return walls
+    dedup=[]
+    seen=set()
+    for w in walls:
+        sx,sy=w["start"]["x"],w["start"]["y"]
+        ex,ey=w["end"]["x"],w["end"]["y"]
+        mx=(sx+ex)/2.0; my=(sy+ey)/2.0
+        ang=normalize_angle(math.atan2(ey-sy,ex-sx))
+        key=(
+            round(mx*unit_scale,2),
+            round(my*unit_scale,2),
+            round(ang,2),
+            round(w["thickness"]*unit_scale,2),
+            round(w["length"]*unit_scale,2)
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        if w["length"]*unit_scale > 25.0:
+            continue
+        dedup.append(w)
+
+    return dedup
 
 def main():
     if len(sys.argv) < 3:

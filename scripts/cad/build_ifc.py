@@ -4,6 +4,9 @@ import math
 import sys
 from pathlib import Path
 
+import numpy as np
+import trimesh
+
 try:
     import ifcopenshell
     import ifcopenshell.api.aggregate
@@ -13,6 +16,8 @@ try:
     import ifcopenshell.api.root
     import ifcopenshell.api.spatial
     import ifcopenshell.api.unit
+    import ifcopenshell.geom
+    import ifcopenshell.util.shape
 except Exception as exc:
     print(json.dumps({"error":"IFCOPENSHELL_NOT_INSTALLED","detail":str(exc)},ensure_ascii=False))
     raise SystemExit(3)
@@ -21,12 +26,13 @@ def load_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 def main():
-    if len(sys.argv)<3:
-        print(json.dumps({"error":"ARGS","detail":"usage: build_ifc.py analysis.json output.ifc"}))
+    if len(sys.argv)<4:
+        print(json.dumps({"error":"ARGS","detail":"usage: build_ifc.py analysis.json output.ifc preview.glb"}))
         return 2
 
     analysis=load_json(sys.argv[1])
     output=Path(sys.argv[2])
+    preview_output=Path(sys.argv[3])
     recon=analysis.get("reconstruction") or {}
     scale=float(recon.get("unitScale") or 0.001)
     floor_height=float(analysis.get("floorHeight") or 3.0)

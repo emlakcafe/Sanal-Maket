@@ -16,8 +16,6 @@ try:
     import ifcopenshell.api.root
     import ifcopenshell.api.spatial
     import ifcopenshell.api.unit
-    import ifcopenshell.geom
-    import ifcopenshell.util.shape
 except Exception as exc:
     print(json.dumps({"error":"IFCOPENSHELL_NOT_INSTALLED","detail":str(exc)},ensure_ascii=False))
     raise SystemExit(3)
@@ -100,32 +98,62 @@ def main():
 
     model.write(str(output))
 
-    # Build browser preview directly from the IFC geometry with IfcOpenShell.
-    settings=ifcopenshell.geom.settings()
+    # Stable browser preview generated from the exact wall segments used to create IFC.
+    # The IFC remains the semantic BIM source; this GLB is only a reliable visual preview.
     scene=trimesh.Scene()
     preview_meshes=0
     preview_faces=0
 
-    for wall in model.by_type("IfcWall"):
+    for idx,w in enumerate(walls):
         try:
-            shape=ifcopenshell.geom.create_shape(settings,wall)
-            verts=np.asarray(ifcopenshell.util.shape.get_vertices(shape.geometry),dtype=float)
-            faces=np.asarray(ifcopenshell.util.shape.get_faces(shape.geometry),dtype=np.int64)
-            if verts.size==0 or faces.size==0:
+            a=w.get("start") or {}
+            b=w.get("end") or {}
+            x1=float(a.get("x",0))*scale-ox
+            y1=float(a.get("y",0))*scale-oy
+            x2=float(b.get("x",0))*scale-ox
+            y2=float(b.get("y",0))*scale-oy
+
+            dx=x2-x1
+            dy=y2-y1
+            length=math.hypot(dx,dy)
+            if length<0.25 or length>40:
                 continue
-            matrix=np.asarray(ifcopenshell.util.shape.get_shape_matrix(shape),dtype=float)
-            homo=np.concatenate([verts,np.ones((verts.shape[0],1),dtype=float)],axis=1)
-            world=(matrix @ homo.T).T[:,:3]
-            mesh=trimesh.Trimesh(vertices=world,faces=faces,process=False)
+
+            thickness=max(0.07,min(0.45,float(w.get("thickness") or 0.20)*scale))
+            angle=math.atan2(dy,dx)
+            cx=(x1+x2)/2.0
+            cy=(y1+y2)/2.0
+
+            mesh=trimesh.creation.box(extents=[length,thickness,floor_height])
+            ca=math.cos(angle)
+            sa=math.sin(angle)
+            transform=np.array([
+                [ca,-sa,0,cx],
+                [sa, ca,0,cy],
+                [0,  0, 1,floor_height/2.0],
+                [0,  0, 0,1]
+            ],dtype=float)
+            mesh.apply_transform(transform)
             mesh.visual.face_colors=[198,202,208,255]
-            scene.add_geometry(mesh,node_name=f"ifc_wall_{wall.id()}",geom_name=f"ifc_wall_{wall.id()}")
+            scene.add_geometry(
+                mesh,
+                node_name=f"ifc_preview_wall_{idx+1}",
+                geom_name=f"ifc_preview_wall_{idx+1}"
+            )
             preview_meshes+=1
-            preview_faces+=int(len(faces))
-        except Exception:
-            continue
+            preview_faces+=int(len(mesh.faces))
+        except Exception as exc:
+            print(json.dumps({
+                "warning":"PREVIEW_WALL_SKIPPED",
+                "index":idx,
+                "detail":str(exc)
+            },ensure_ascii=False),file=sys.stderr)
 
     if preview_meshes==0:
-        print(json.dumps({"error":"IFC_PREVIEW_FAILED","detail":"IFC üretildi ancak önizleme mesh'i oluşturulamadı."},ensure_ascii=False))
+        print(json.dumps({
+            "error":"IFC_PREVIEW_FAILED",
+            "detail":"IFC üretildi ancak duvar önizleme mesh'i oluşturulamadı."
+        },ensure_ascii=False))
         return 6
 
     glb=scene.export(file_type="glb")

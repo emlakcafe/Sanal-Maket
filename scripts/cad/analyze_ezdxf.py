@@ -140,60 +140,89 @@ def main():
         print(json.dumps({"error":"DXF_READ_FAILED","detail":str(exc)}, ensure_ascii=False))
         return 4
 
-    msp = doc.modelspace()
-    entities = []
-    texts = []
-    layer_counts = {}
-    counts = {k:0 for k in KINDS}
-    minx = miny = float("inf")
-    maxx = maxy = float("-inf")
+    def scan_layout(layout):
+        entities = []
+        texts = []
+        layer_counts = {}
+        counts = {k:0 for k in KINDS}
+        minx = miny = float("inf")
+        maxx = maxy = float("-inf")
 
-    def add_bound(pt):
-        nonlocal minx, miny, maxx, maxy
-        x, y = float(pt[0]), float(pt[1])
-        minx = min(minx, x); maxx = max(maxx, x)
-        miny = min(miny, y); maxy = max(maxy, y)
+        def add_bound(pt):
+            nonlocal minx, miny, maxx, maxy
+            x, y = float(pt[0]), float(pt[1])
+            minx = min(minx, x); maxx = max(maxx, x)
+            miny = min(miny, y); maxy = max(maxy, y)
 
-    for source in msp:
-        for e in iter_virtual(source):
-            layer = str(getattr(e.dxf, "layer", "0") or "0")
-            layer_counts[layer] = layer_counts.get(layer, 0) + 1
-            kind, _ = classify(layer)
-            t = e.dxftype()
-            if t in ("TEXT","MTEXT","ATTRIB") and kind == "unknown":
-                kind = "text"
-            if t == "DIMENSION" and kind == "unknown":
-                kind = "dimension"
+        for source in layout:
+            for e in iter_virtual(source):
+                layer = str(getattr(e.dxf, "layer", "0") or "0")
+                layer_counts[layer] = layer_counts.get(layer, 0) + 1
+                kind, _ = classify(layer)
+                t = e.dxftype()
+                if t in ("TEXT","MTEXT","ATTRIB") and kind == "unknown":
+                    kind = "text"
+                if t == "DIMENSION" and kind == "unknown":
+                    kind = "dimension"
 
-            pts = entity_points(e)
-            if not pts:
-                continue
-            tuples = [(float(p.x), float(p.y), float(getattr(p, "z", 0.0) or 0.0)) for p in pts]
-            if not inside_region(tuples, region):
-                continue
+                pts = entity_points(e)
+                if not pts:
+                    continue
+                tuples = [(float(p.x), float(p.y), float(getattr(p, "z", 0.0) or 0.0)) for p in pts]
+                if not inside_region(tuples, region):
+                    continue
 
-            item = {"type":t, "layer":layer, "kind":kind}
+                item = {"type":t, "layer":layer, "kind":kind}
 
-            if t in ("LINE","LWPOLYLINE","POLYLINE"):
-                item["vertices"] = [{"x":p[0],"y":p[1],"z":p[2]} for p in tuples]
-            elif t in ("CIRCLE","ARC","ELLIPSE"):
-                c = e.dxf.center
-                item["center"] = v3(c)
-                if t in ("CIRCLE","ARC"):
-                    item["radius"] = float(e.dxf.radius)
-            elif t in ("TEXT","MTEXT","ATTRIB","POINT"):
-                p = pts[0]
-                item["center"] = v3(p)
+                if t in ("LINE","LWPOLYLINE","POLYLINE"):
+                    item["vertices"] = [{"x":p[0],"y":p[1],"z":p[2]} for p in tuples]
+                elif t in ("CIRCLE","ARC","ELLIPSE"):
+                    center = e.dxf.center
+                    item["center"] = v3(center)
+                    if t in ("CIRCLE","ARC"):
+                        item["radius"] = float(e.dxf.radius)
+                elif t in ("TEXT","MTEXT","ATTRIB","POINT"):
+                    p = pts[0]
+                    item["center"] = v3(p)
 
-            txt = text_value(e).strip()
-            if txt:
-                item["text"] = txt
-                texts.append({"layer":layer,"text":txt})
+                txt = text_value(e).strip()
+                if txt:
+                    item["text"] = txt
+                    texts.append({"layer":layer,"text":txt})
 
-            counts[kind] += 1
-            entities.append(item)
-            for p in tuples:
-                add_bound(p)
+                counts[kind] += 1
+                entities.append(item)
+                for p in tuples:
+                    add_bound(p)
+
+        bounds = None
+        if math.isfinite(minx):
+            bounds = {"minX":minx,"minY":miny,"maxX":maxx,"maxY":maxy}
+
+        recognized = counts["wall"] + counts["column"] + counts["door"] + counts["window"] + counts["stair"]
+        return {
+            "name": layout.name,
+            "entities": entities,
+            "texts": texts,
+            "layer_counts": layer_counts,
+            "counts": counts,
+            "bounds": bounds,
+            "recognized": recognized,
+            "total": len(entities)
+        }
+
+    scans = [scan_layout(layout) for layout in doc.layouts]
+    scans.sort(key=lambda s: (s["recognized"], s["total"]), reverse=True)
+    best = scans[0] if scans else {
+        "name":"Model","entities":[],"texts":[],"layer_counts":{},
+        "counts":{k:0 for k in KINDS},"bounds":None,"recognized":0,"total":0
+    }
+
+    entities = best["entities"]
+    texts = best["texts"]
+    layer_counts = best["layer_counts"]
+    counts = best["counts"]
+    bounds = best["bounds"]
 
     layers = []
     for name, entity_count in layer_counts.items():
@@ -218,13 +247,14 @@ def main():
     if counts["window"] == 0:
         warnings.append("Seçilen planda PENCERE geometrisi bulunamadı veya farklı katmandadır.")
 
-    bounds = None
-    if math.isfinite(minx):
-        bounds = {"minX":minx,"minY":miny,"maxX":maxx,"maxY":maxy}
-
     result = {
         "engine":"ezdxf",
         "dxfVersion":doc.dxfversion,
+        "layout":best["name"],
+        "layoutDiagnostics":[
+            {"name":s["name"],"recognized":s["recognized"],"total":s["total"]}
+            for s in scans
+        ],
         "layers":layers,
         "entities":entities,
         "counts":counts,

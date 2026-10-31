@@ -36,6 +36,17 @@ export type ReconstructedWallSegment = {
   sourceLayers?:string[];
 };
 
+export type ReconstructedOpening = {
+  kind:"door"|"window";
+  wallIndex:number;
+  t:number;
+  x:number;
+  y:number;
+  width:number;
+  source?:string;
+  members?:number;
+};
+
 export type CadSemanticAnalysis = {
   engine?: string;
   dxfVersion?: string;
@@ -53,9 +64,12 @@ export type CadSemanticAnalysis = {
   layers: SemanticLayer[];
   entities: SemanticEntity[];
   wallSegments?: ReconstructedWallSegment[];
+  openings?: ReconstructedOpening[];
   reconstruction?: {
     rawWallEntityCount:number;
     wallSegmentCount:number;
+    doorOpeningCount?:number;
+    windowOpeningCount?:number;
     unitMode:string;
     unitScale:number;
   };

@@ -250,6 +250,158 @@ def reconstruct_walls(entities, unit_scale):
 
     return dedup
 
+
+def point_seg_distance(px,py,ax,ay,bx,by):
+    vx=bx-ax; vy=by-ay
+    d=vx*vx+vy*vy
+    if d<=1e-12:
+        return math.hypot(px-ax,py-ay),0.0
+    t=((px-ax)*vx+(py-ay)*vy)/d
+    t=max(0.0,min(1.0,t))
+    qx=ax+t*vx; qy=ay+t*vy
+    return math.hypot(px-qx,py-qy),t
+
+def entity_sample_points(item):
+    pts=[]
+    for v in item.get("vertices") or []:
+        pts.append((float(v.get("x",0)),float(v.get("y",0))))
+    c=item.get("center")
+    if c:
+        pts.append((float(c.get("x",0)),float(c.get("y",0))))
+    return pts
+
+def cluster_points(points, threshold):
+    n=len(points)
+    parent=list(range(n))
+    def find(x):
+        while parent[x]!=x:
+            parent[x]=parent[parent[x]]
+            x=parent[x]
+        return x
+    def union(a,b):
+        ra,rb=find(a),find(b)
+        if ra!=rb:
+            parent[rb]=ra
+    for i in range(n):
+        xi,yi=points[i]
+        for j in range(i+1,n):
+            xj,yj=points[j]
+            if math.hypot(xj-xi,yj-yi)<=threshold:
+                union(i,j)
+    groups={}
+    for i in range(n):
+        groups.setdefault(find(i),[]).append(i)
+    return list(groups.values())
+
+def reconstruct_openings(entities, walls, unit_scale):
+    candidates=[]
+
+    # Strong door signal: swing arcs with residential-scale radius.
+    for idx,e in enumerate(entities):
+        t=e.get("type")
+        layer=norm(e.get("layer",""))
+        radius=float(e.get("radius") or 0.0)
+        center=e.get("center")
+        if t=="ARC" and center and 0.45 <= radius*unit_scale <= 1.60:
+            kind="door" if ("KAPI" in layer or e.get("kind") in ("door","window")) else None
+            if kind:
+                candidates.append({
+                    "kind":"door",
+                    "x":float(center.get("x",0)),
+                    "y":float(center.get("y",0)),
+                    "width":max(0.70,min(1.60,radius*unit_scale)),
+                    "source":"arc",
+                    "entityIndex":idx
+                })
+
+    # Window signal: many line/polyline primitives close to each other on window-related layers.
+    win_points=[]
+    for idx,e in enumerate(entities):
+        if e.get("kind")!="window":
+            continue
+        if e.get("type") not in ("LINE","LWPOLYLINE","POLYLINE"):
+            continue
+        pts=entity_sample_points(e)
+        if not pts:
+            continue
+        xs=[p[0] for p in pts]; ys=[p[1] for p in pts]
+        cx=sum(xs)/len(xs); cy=sum(ys)/len(ys)
+        win_points.append((cx,cy,idx))
+
+    if win_points:
+        coords=[(p[0],p[1]) for p in win_points]
+        groups=cluster_points(coords, max(0.65/unit_scale,1.0))
+        for g in groups:
+            if len(g)<2:
+                continue
+            pts=[]
+            for gi in g:
+                e=entities[win_points[gi][2]]
+                pts.extend(entity_sample_points(e))
+            if not pts:
+                continue
+            xs=[p[0] for p in pts]; ys=[p[1] for p in pts]
+            width_m=max(max(xs)-min(xs),max(ys)-min(ys))*unit_scale
+            if width_m<0.35 or width_m>5.0:
+                continue
+            candidates.append({
+                "kind":"window",
+                "x":sum(xs)/(len(xs)),
+                "y":sum(ys)/(len(ys)),
+                "width":max(0.45,min(3.50,width_m)),
+                "source":"cluster",
+                "members":len(g)
+            })
+
+    # Snap each opening to nearest reconstructed wall.
+    out=[]
+    for op in candidates:
+        best=None
+        for wi,w in enumerate(walls):
+            ax=float(w["start"]["x"]); ay=float(w["start"]["y"])
+            bx=float(w["end"]["x"]); by=float(w["end"]["y"])
+            dist,t=point_seg_distance(op["x"],op["y"],ax,ay,bx,by)
+            dist_m=dist*unit_scale
+            if dist_m>0.85:
+                continue
+            score=dist_m
+            if best is None or score<best[0]:
+                best=(score,wi,t)
+        if best is None:
+            continue
+        _,wi,t=best
+        w=walls[wi]
+        ax=float(w["start"]["x"]); ay=float(w["start"]["y"])
+        bx=float(w["end"]["x"]); by=float(w["end"]["y"])
+        x=ax+(bx-ax)*t; y=ay+(by-ay)*t
+        wall_len=float(w["length"])*unit_scale
+        width=min(op["width"], max(0.35, wall_len-0.20))
+        out.append({
+            "kind":op["kind"],
+            "wallIndex":wi,
+            "t":t,
+            "x":x,
+            "y":y,
+            "width":width,
+            "source":op.get("source"),
+            "members":op.get("members",1)
+        })
+
+    # De-duplicate openings on same wall and close station.
+    dedup=[]
+    for op in sorted(out,key=lambda z:(z["wallIndex"],z["t"],z["kind"])):
+        duplicate=False
+        for prev in dedup[-8:]:
+            if prev["wallIndex"]==op["wallIndex"] and abs(prev["t"]-op["t"])<0.045:
+                # Door arc wins over a generic window cluster at same location.
+                if op["kind"]=="door" and prev["kind"]!="door":
+                    prev.update(op)
+                duplicate=True
+                break
+        if not duplicate:
+            dedup.append(op)
+
+    return dedup
 def main():
     if len(sys.argv) < 3:
         print(json.dumps({"error":"ARGS","detail":"usage: analyze_ezdxf.py file.dxf selection.json"}, ensure_ascii=False))
@@ -325,6 +477,9 @@ def main():
                     item["center"] = v3(center)
                     if t in ("CIRCLE","ARC"):
                         item["radius"] = float(e.dxf.radius)
+                    if t == "ARC":
+                        item["startAngle"] = float(getattr(e.dxf,"start_angle",0.0))
+                        item["endAngle"] = float(getattr(e.dxf,"end_angle",0.0))
                 elif t in ("TEXT","MTEXT","ATTRIB","POINT"):
                     p = pts[0]
                     item["center"] = v3(p)
@@ -381,6 +536,7 @@ def main():
     layers.sort(key=lambda x:(-x["confidence"],-x["entityCount"]))
 
     wall_segments = reconstruct_walls(entities, unit_scale)
+    openings = reconstruct_openings(entities, wall_segments, unit_scale)
 
     warnings = []
     if not entities:
@@ -416,9 +572,12 @@ def main():
         "layers":layers,
         "entities":entities,
         "wallSegments":wall_segments,
+        "openings":openings,
         "reconstruction":{
             "rawWallEntityCount":counts["wall"],
             "wallSegmentCount":len(wall_segments),
+            "doorOpeningCount":sum(1 for o in openings if o["kind"]=="door"),
+            "windowOpeningCount":sum(1 for o in openings if o["kind"]=="window"),
             "unitMode":unit_mode,
             "unitScale":unit_scale
         },

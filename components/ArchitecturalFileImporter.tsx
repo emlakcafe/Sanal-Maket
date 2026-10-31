@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { ACCEPTED_ARCHITECTURAL_EXTENSIONS, CAD_FORMATS, getCadFormat } from "@/lib/cad/formats";
 import { type CadSemanticAnalysis, type CadSelectionRegion } from "@/lib/cad/semanticAnalyzer";
@@ -143,6 +143,7 @@ export default function ArchitecturalFileImporter(){
   const [builtFloors,setBuiltFloors]=useState<BuiltFloor[]>([]);
   const [buildStep,setBuildStep]=useState<BuildStep>("ground-select");
   const [nextFloorIndex,setNextFloorIndex]=useState(1);
+  const previewAnchorRef=useRef<HTMLDivElement|null>(null);
 
   const fmt=useMemo(()=>file?getCadFormat(file.name):null,[file]);
   const displayedAnalysis=analysis ?? (builtFloors.length ? builtFloors[builtFloors.length-1].analysis : null);
@@ -237,6 +238,8 @@ export default function ArchitecturalFileImporter(){
       setAnalysisProgress(100);
       setGenerationStage(`${name} tamamlandı`);
       setSelection(null);
+
+      setTimeout(()=>previewAnchorRef.current?.scrollIntoView({behavior:"smooth",block:"start"}),60);
 
       if(buildStep==="ground-select"){
         setBuildStep("ground-built");
@@ -366,7 +369,7 @@ export default function ArchitecturalFileImporter(){
             ? "Zemin kat planı seçildi. Şimdi Zemin Kat 3D Modelini Oluştur butonuna basın."
             : `${nextFloorIndex}. kat planı seçildi. Şimdi Katı Oluştur butonuna basın.`);
         }}/>
-        {builtFloors.length>0&&<div style={{marginTop:16}}>
+        {builtFloors.length>0&&<div ref={previewAnchorRef} style={{marginTop:16,scrollMarginTop:18}}>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
             {builtFloors.map((f,i)=><div key={f.name} style={{padding:"8px 10px",borderRadius:8,background:"#eaf4ff",border:"1px solid #b9d2ef",fontSize:11}}>
               <b>{f.name}</b><br/>Kot: {f.elevation.toFixed(2)} m · Yükseklik: {f.height.toFixed(2)} m
@@ -383,7 +386,7 @@ export default function ArchitecturalFileImporter(){
           {displayedAnalysis&&displayedAnalysis.warnings.length>0&&<div style={{padding:10,border:"1px solid #e9c77d",background:"#fff8e9",borderRadius:9,fontSize:11,lineHeight:1.5,marginBottom:12}}>
             {displayedAnalysis.warnings.map(w=><div key={w}>• {w}</div>)}
           </div>}
-          <h2 style={{fontSize:20,margin:"10px 0"}}>Projeye Sadık 3D Teknik Önizleme</h2>
+          <h2 style={{fontSize:20,margin:"10px 0"}}>Oluşturulan Katlar · Canlı 3D Önizleme</h2>
           <CadSemantic3DPreview floors={builtFloors} wallThickness={wallThickness} unitScale={unitMode==="mm"?.001:unitMode==="cm"?.01:1}/>
         </div>}
         {file && [".glb",".gltf",".obj",".stl"].includes(fmt?.ext||"") && <ThreeFilePreview file={file}/>}

@@ -12,6 +12,7 @@ const ThreeFilePreview = dynamic(
 const ProfessionalDxfViewer = dynamic(() => import("@/components/ProfessionalDxfViewer"), { ssr: false });
 const CadSemantic3DPreview = dynamic(() => import("@/components/CadSemantic3DPreview"), { ssr: false });
 const CadGlbPreview = dynamic(() => import("@/components/CadGlbPreview"), { ssr: false });
+const CadProjectPreview = dynamic(() => import("@/components/CadProjectPreview"), { ssr: false });
 
 type Pt = { x:number; y:number };
 type BuiltFloor = {
@@ -29,6 +30,7 @@ type BuiltFloor = {
     columns?:number;
     roofPolygons?:number;
     roofArea?:number;
+    origin?:{x:number;y:number};
     bounds?:number[][];
   };
 };
@@ -156,6 +158,7 @@ export default function ArchitecturalFileImporter(){
   const [builtFloors,setBuiltFloors]=useState<BuiltFloor[]>([]);
   const [buildStep,setBuildStep]=useState<BuildStep>("ground-select");
   const [nextFloorIndex,setNextFloorIndex]=useState(1);
+  const [projectAssembled,setProjectAssembled]=useState(false);
   const previewAnchorRef=useRef<HTMLDivElement|null>(null);
 
   const fmt=useMemo(()=>file?getCadFormat(file.name):null,[file]);
@@ -163,7 +166,7 @@ export default function ArchitecturalFileImporter(){
 
   async function loadFile(next:File|null){
     if(objectUrl) URL.revokeObjectURL(objectUrl);
-    setObjectUrl(null); setDxf(null); setDxfText(""); setAnalysis(null); setSelection(null); setBuiltFloors([]); setBuildStep("ground-select"); setNextFloorIndex(1); setMessage(""); setFile(next);
+    setObjectUrl(null); setDxf(null); setDxfText(""); setAnalysis(null); setSelection(null); setBuiltFloors([]); setBuildStep("ground-select"); setNextFloorIndex(1); setProjectAssembled(false); setMessage(""); setFile(next);
     if(!next)return;
     const info=getCadFormat(next.name);
     if(!info){setMessage("Bu dosya uzantisi henuz desteklenmiyor.");return;}
@@ -270,6 +273,7 @@ export default function ArchitecturalFileImporter(){
           windows:glb.windows,
           glassPanels:glb.glassPanels,
           columns:glb.columns,
+          origin:glb.origin,
           bounds:glb.bounds
         }
       };
@@ -355,6 +359,7 @@ export default function ArchitecturalFileImporter(){
           bytes:roof.bytes,
           roofPolygons:roof.roofPolygons,
           roofArea:roof.roofArea,
+          origin:roof.origin,
           bounds:roof.bounds
         }
       };
@@ -373,6 +378,19 @@ export default function ArchitecturalFileImporter(){
     }finally{
       setAnalysisBusy(false);
     }
+  }
+
+  function assembleProject(){
+    const parts=builtFloors.filter(f=>Boolean(f.glbBase64));
+    if(parts.length<2){
+      setMessage("Projeyi birleştirmek için en az bir kat ve çatı modeli gerekir.");
+      return;
+    }
+    setProjectAssembled(true);
+    setBuildStep("complete");
+    setGenerationStage("Katlar ve çatı birleştirildi");
+    setMessage("Katlar ve çatı tek proje sahnesinde birleştirildi. Şimdi birleşik modeli kontrol edin.");
+    setTimeout(()=>previewAnchorRef.current?.scrollIntoView({behavior:"smooth",block:"start"}),60);
   }
 
   function requestUpperFloor(){
@@ -482,8 +500,18 @@ export default function ArchitecturalFileImporter(){
             }}>{analysisBusy?`Emlak Cafe AI işliyor · %${analysisProgress}`:"Çatıyı Oluştur"}</button>
           </div>}
 
-          {buildStep==="facade-select"&&<div style={{padding:10,borderRadius:9,background:"#eaf7ef",fontSize:11,color:"#28653b"}}>
-            Çatı tamamlandı. Sıradaki aşama: cephe/görünüş planlarından dış cephe modelleme.
+          {buildStep==="facade-select"&&<div style={{display:"grid",gap:8}}>
+            <div style={{padding:10,borderRadius:9,background:"#eaf7ef",fontSize:11,color:"#28653b"}}>
+              Katlar ve çatı hazır. Önce tüm parçaları tek projede birleştirip konumlarını kontrol edelim.
+            </div>
+            <button type="button" onClick={assembleProject} style={{
+              width:"100%",padding:"12px 10px",border:0,borderRadius:9,
+              background:"#176be0",color:"#fff",fontWeight:800,cursor:"pointer"
+            }}>Katları Birleştir → Projeyi Oluştur</button>
+          </div>}
+
+          {buildStep==="complete"&&<div style={{padding:10,borderRadius:9,background:"#eaf7ef",fontSize:11,color:"#28653b"}}>
+            Birleştirilmiş proje hazır. Sonraki aşama: cephe/görünüşlerden dış cephe detaylarını işlemek.
           </div>}
 
           <div style={{fontSize:10,color:"#7187a3",marginTop:8,lineHeight:1.4}}>Her kat ayrı ayrı tamamlanır; sonraki kat ancak kullanıcı seçtikten sonra eklenir.</div>
@@ -550,10 +578,17 @@ export default function ArchitecturalFileImporter(){
           {displayedAnalysis&&displayedAnalysis.warnings.length>0&&<div style={{padding:10,border:"1px solid #e9c77d",background:"#fff8e9",borderRadius:9,fontSize:11,lineHeight:1.5,marginBottom:12}}>
             {displayedAnalysis.warnings.map(w=><div key={w}>• {w}</div>)}
           </div>}
-          <h2 style={{fontSize:20,margin:"10px 0"}}>Oluşturulan Katlar · GLB Önizleme</h2>
-          {builtFloors[builtFloors.length-1]?.glbBase64
-            ? <CadGlbPreview base64={builtFloors[builtFloors.length-1].glbBase64!}/>
-            : <CadSemantic3DPreview floors={builtFloors} wallThickness={wallThickness} unitScale={unitMode==="mm"?.001:unitMode==="cm"?.01:1}/>}
+          <h2 style={{fontSize:20,margin:"10px 0"}}>{projectAssembled?"Birleştirilmiş Proje":"Oluşturulan Katlar · GLB Önizleme"}</h2>
+          {projectAssembled
+            ? <CadProjectPreview parts={builtFloors.filter(f=>Boolean(f.glbBase64)).map(f=>({
+                name:f.name,
+                base64:f.glbBase64!,
+                elevation:f.elevation,
+                origin:f.glbMeta?.origin
+              }))}/>
+            : builtFloors[builtFloors.length-1]?.glbBase64
+              ? <CadGlbPreview base64={builtFloors[builtFloors.length-1].glbBase64!}/>
+              : <CadSemantic3DPreview floors={builtFloors} wallThickness={wallThickness} unitScale={unitMode==="mm"?.001:unitMode==="cm"?.01:1}/>}
 
         </div>}
         {file && [".glb",".gltf",".obj",".stl"].includes(fmt?.ext||"") && <ThreeFilePreview file={file}/>}

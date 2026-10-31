@@ -52,7 +52,8 @@ export async function POST(request: Request) {
           windowsHide: true,
           timeout: 180000,
           maxBuffer: 64 * 1024 * 1024,
-          encoding: "utf8"
+          encoding: "utf8",
+          env: { ...process.env, PYTHONIOENCODING: "utf-8" }
         }
       );
 

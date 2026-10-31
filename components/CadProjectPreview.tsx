@@ -9,6 +9,7 @@ export type ProjectGlbPart = {
   name:string;
   base64:string;
   elevation:number;
+  origin?:{x:number;y:number};
 };
 
 export default function CadProjectPreview({parts}:{parts:ProjectGlbPart[]}){
@@ -48,6 +49,8 @@ export default function CadProjectPreview({parts}:{parts:ProjectGlbPart[]}){
     scene.add(group);
 
     let cancelled=false;
+    const baseOrigin=parts.find(p=>p.origin)?.origin || {x:0,y:0};
+
     const jobs=parts.map(part=>new Promise<void>((resolve,reject)=>{
       const bytes=Uint8Array.from(atob(part.base64),ch=>ch.charCodeAt(0));
       const blob=new Blob([bytes],{type:"model/gltf-binary"});
@@ -58,7 +61,10 @@ export default function CadProjectPreview({parts}:{parts:ProjectGlbPart[]}){
         if(cancelled){resolve();return;}
         const model=gltf.scene;
         model.rotation.x=-Math.PI/2;
+        const origin=part.origin || baseOrigin;
+        model.position.x=origin.x-baseOrigin.x;
         model.position.y=part.elevation;
+        model.position.z=-(origin.y-baseOrigin.y);
         model.name=part.name;
         model.traverse(obj=>{
           const mesh=obj as THREE.Mesh;

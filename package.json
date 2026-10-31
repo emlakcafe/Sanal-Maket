@@ -19,7 +19,9 @@
     "@turf/helpers": "^7.2.0",
     "leaflet": "^1.9.4",
     "maplibre-gl": "^5.8.0",
-    "@turf/boolean-within": "^7.2.0"
+    "@turf/boolean-within": "^7.2.0",
+    "dxf-parser": "^1.1.2",
+    "web-ifc": "^0.0.78"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -194,8 +194,8 @@ export default function ArchitecturalFileImporter(){
     if(!dxfText) return;
     if(!selection){
       setMessage(buildStep==="ground-select"
-        ? "Önce zemin kat planını 4 köşe ile seçin."
-        : "Önce eklemek istediğiniz üst kat planını 4 köşe ile seçin.");
+        ? "Önce zemin kat planını sürükleyerek seçin."
+        : "Önce eklemek istediğiniz üst kat planını sürükleyerek seçin.");
       return;
     }
 
@@ -261,7 +261,7 @@ export default function ArchitecturalFileImporter(){
     setSelection(null);
     setAnalysis(null);
     setBuildStep("upper-select");
-    setMessage(`${nextFloorIndex}. kat planını CAD üzerinde 4 köşe ile seçin, sonra Katı Oluştur butonuna basın.`);
+    setMessage(`${nextFloorIndex}. kat planını CAD üzerinde sürükleyerek seçin, sonra Katı Oluştur butonuna basın.`);
     window.scrollTo({top:0,behavior:"smooth"});
   }
 
@@ -269,7 +269,7 @@ export default function ArchitecturalFileImporter(){
     setSelection(null);
     setAnalysis(null);
     setBuildStep("roof-select");
-    setMessage("Kat modellemesi tamamlandı. Şimdi çatı planını 4 köşe ile seçme aşamasına geçiyoruz.");
+    setMessage("Kat modellemesi tamamlandı. Şimdi çatı planını sürükleyerek seçme aşamasına geçiyoruz.");
     window.scrollTo({top:0,behavior:"smooth"});
   }
 
@@ -325,7 +325,7 @@ export default function ArchitecturalFileImporter(){
           <div style={{fontSize:10,padding:8,borderRadius:7,background:selection?"#eaf7ef":"#fff3df",color:selection?"#28653b":"#8a5a13",marginBottom:10}}>
             {selection
               ? (buildStep==="ground-select" ? "Zemin kat planı seçildi." : "Üst kat planı seçildi.")
-              : (buildStep==="ground-select" ? "Zemin kat planını 4 köşe ile seçin." : buildStep==="upper-select" ? `${nextFloorIndex}. kat planını 4 köşe ile seçin.` : "Mevcut kat modellemesi tamamlandı.")}
+              : (buildStep==="ground-select" ? "Zemin kat planını sürükleyerek seçin." : buildStep==="upper-select" ? `${nextFloorIndex}. kat planını sürükleyerek seçin.` : "Mevcut kat modellemesi tamamlandı.")}
           </div>
 
           {(buildStep==="ground-select"||buildStep==="upper-select")&&<button type="button" onClick={createCurrentFloor} disabled={analysisBusy||!selection} style={{

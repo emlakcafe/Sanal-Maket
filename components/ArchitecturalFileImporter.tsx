@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { ACCEPTED_ARCHITECTURAL_EXTENSIONS, CAD_FORMATS, getCadFormat } from "@/lib/cad/formats";
 import { type CadSemanticAnalysis, type CadSelectionRegion } from "@/lib/cad/semanticAnalyzer";
@@ -160,6 +160,42 @@ export default function ArchitecturalFileImporter(){
   const [nextFloorIndex,setNextFloorIndex]=useState(1);
   const [projectAssembled,setProjectAssembled]=useState(false);
   const previewAnchorRef=useRef<HTMLDivElement|null>(null);
+  const sessionHydratedRef=useRef(false);
+
+  useEffect(()=>{
+    try{
+      const raw=localStorage.getItem("emlak-cafe-cad-project-session-v1");
+      if(raw){
+        const saved=JSON.parse(raw);
+        if(Array.isArray(saved.builtFloors)) setBuiltFloors(saved.builtFloors);
+        if(saved.buildStep) setBuildStep(saved.buildStep);
+        if(Number.isFinite(saved.nextFloorIndex)) setNextFloorIndex(saved.nextFloorIndex);
+        if(typeof saved.projectAssembled==="boolean") setProjectAssembled(saved.projectAssembled);
+        if(saved.unitMode) setUnitMode(saved.unitMode);
+        if(Number.isFinite(saved.floorHeight)) setFloorHeight(saved.floorHeight);
+        if(Number.isFinite(saved.wallThickness)) setWallThickness(saved.wallThickness);
+        if(saved.message) setMessage(saved.message);
+      }
+    }catch{}
+    sessionHydratedRef.current=true;
+  },[]);
+
+  useEffect(()=>{
+    if(!sessionHydratedRef.current) return;
+    try{
+      localStorage.setItem("emlak-cafe-cad-project-session-v1",JSON.stringify({
+        builtFloors,
+        buildStep,
+        nextFloorIndex,
+        projectAssembled,
+        unitMode,
+        floorHeight,
+        wallThickness,
+        message,
+        savedAt:new Date().toISOString()
+      }));
+    }catch{}
+  },[builtFloors,buildStep,nextFloorIndex,projectAssembled,unitMode,floorHeight,wallThickness,message]);
 
   const fmt=useMemo(()=>file?getCadFormat(file.name):null,[file]);
   const displayedAnalysis=analysis ?? (builtFloors.length ? builtFloors[builtFloors.length-1].analysis : null);
@@ -445,6 +481,7 @@ export default function ArchitecturalFileImporter(){
         {message&&<div style={{marginTop:12,padding:10,borderRadius:9,background:"#edf5ff",fontSize:12,lineHeight:1.45}}>{busy?"İşleniyor…":message}</div>}
         {dxfText&&<div style={{marginTop:14,padding:12,border:"1px solid #b8cce6",borderRadius:10,background:"#f8fbff"}}>
           <b style={{display:"block",fontSize:13,marginBottom:9}}>3D Model Ayarları</b>
+          <div style={{fontSize:10,color:"#54708f",marginBottom:8}}>Proje oturumu otomatik kaydedilir; sayfa yenilense bile oluşturulan katlar geri yüklenir.</div>
           <label style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>Kat yüksekliği (m)
             <input type="number" step=".05" min="2" max="8" value={floorHeight} onChange={e=>setFloorHeight(Number(e.target.value)||3)} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}/>
           </label>

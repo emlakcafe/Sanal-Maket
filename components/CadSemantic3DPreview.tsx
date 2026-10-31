@@ -125,10 +125,26 @@ export default function CadSemantic3DPreview({
         }
       }
 
+      if(floor.analysis.wallSegments?.length){
+        for(const wall of floor.analysis.wallSegments){
+          addSegment(
+            wall.start,
+            wall.end,
+            floorHeight,
+            Math.max(0.08,wall.thickness*unitScale),
+            wallMat,
+            baseY+0.18
+          );
+        }
+      }
+
       for(const e of floor.analysis.entities){
         const vs=e.vertices||[];
-        if(e.kind==="wall" && vs.length>=2){
-          for(let i=0;i<vs.length-1;i++) addSegment(vs[i],vs[i+1],floorHeight,wallThickness,wallMat,baseY+0.18);
+        if(e.kind==="wall"){
+          if(floor.analysis.wallSegments?.length) continue;
+          if(vs.length>=2){
+            for(let i=0;i<vs.length-1;i++) addSegment(vs[i],vs[i+1],floorHeight,wallThickness,wallMat,baseY+0.18);
+          }
         } else if(e.kind==="column"){
           if(e.center && e.radius){
             const m=new THREE.Mesh(new THREE.CylinderGeometry(e.radius*unitScale,e.radius*unitScale,floorHeight,24),columnMat);

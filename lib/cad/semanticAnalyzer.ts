@@ -28,6 +28,14 @@ export type CadSelectionRegion = {
   bounds: CadSelectionBounds;
 };
 
+export type ReconstructedWallSegment = {
+  start:{x:number;y:number;z?:number};
+  end:{x:number;y:number;z?:number};
+  thickness:number;
+  length:number;
+  sourceLayers?:string[];
+};
+
 export type CadSemanticAnalysis = {
   engine?: string;
   dxfVersion?: string;
@@ -44,6 +52,13 @@ export type CadSemanticAnalysis = {
   }>;
   layers: SemanticLayer[];
   entities: SemanticEntity[];
+  wallSegments?: ReconstructedWallSegment[];
+  reconstruction?: {
+    rawWallEntityCount:number;
+    wallSegmentCount:number;
+    unitMode:string;
+    unitScale:number;
+  };
   counts: Record<SemanticKind, number>;
   texts: Array<{layer:string;text:string}>;
   bounds: {minX:number;minY:number;maxX:number;maxY:number} | null;

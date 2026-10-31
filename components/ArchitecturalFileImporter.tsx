@@ -213,7 +213,7 @@ export default function ArchitecturalFileImporter(){
       const res=await fetch("/api/cad/analyze",{
         method:"POST",
         headers:{"content-type":"application/json"},
-        body:JSON.stringify({dxfText,selection})
+        body:JSON.stringify({dxfText,selection,unitMode})
       });
       if(!res.ok){
         const err=await res.json().catch(()=>({error:"CAD analizi basarisiz."}));
@@ -373,6 +373,9 @@ export default function ArchitecturalFileImporter(){
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
             {displayedAnalysis?.engine&&<div style={{padding:"8px 10px",borderRadius:8,background:"#e9f8ef",border:"1px solid #abd5b8",fontSize:11,color:"#245d35"}}>
               <b>CAD Motoru:</b> {displayedAnalysis.engine}{displayedAnalysis.dxfVersion?` · ${displayedAnalysis.dxfVersion}`:""}{displayedAnalysis.layout?` · ${displayedAnalysis.layout}`:""}
+            </div>}
+            {displayedAnalysis?.reconstruction&&<div style={{padding:"8px 10px",borderRadius:8,background:"#eef6ff",border:"1px solid #b7cde8",fontSize:11,color:"#244f7b"}}>
+              <b>Duvar Rekonstrüksiyonu:</b> Ham {displayedAnalysis.reconstruction.rawWallEntityCount} → Gerçek {displayedAnalysis.reconstruction.wallSegmentCount}
             </div>}
             {builtFloors.map((f,i)=><div key={f.name} style={{padding:"8px 10px",borderRadius:8,background:"#eaf4ff",border:"1px solid #b9d2ef",fontSize:11}}>
               <b>{f.name}</b><br/>Kot: {f.elevation.toFixed(2)} m · Yükseklik: {f.height.toFixed(2)} m

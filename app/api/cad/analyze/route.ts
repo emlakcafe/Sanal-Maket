@@ -18,6 +18,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const dxfText = String(body?.dxfText || "");
     const selection = body?.selection as CadSelectionRegion | null;
+    const unitMode = String(body?.unitMode || "mm");
 
     if (!dxfText) {
       return NextResponse.json({ error: "DXF verisi bulunamadi." }, { status: 400 });
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
     }
 
     await writeFile(dxfPath, dxfText, "utf8");
-    await writeFile(selectionPath, JSON.stringify(selection), "utf8");
+    await writeFile(selectionPath, JSON.stringify({selection,unitMode}), "utf8");
 
     try {
       const { stdout, stderr } = await execFileAsync(

@@ -32,7 +32,16 @@ export type CadSemanticAnalysis = {
   engine?: string;
   dxfVersion?: string;
   layout?: string;
-  layoutDiagnostics?: Array<{name:string;recognized:number;total:number}>;
+  selectionDiagnostics?: {
+    polygon?: Array<{x:number;y:number}>;
+    bounds?: {minX:number;minY:number;maxX:number;maxY:number};
+  };
+  layoutDiagnostics?: Array<{
+    name:string;
+    recognized:number;
+    total:number;
+    rawBounds?: {minX:number;minY:number;maxX:number;maxY:number;pointCount?:number} | null;
+  }>;
   layers: SemanticLayer[];
   entities: SemanticEntity[];
   counts: Record<SemanticKind, number>;

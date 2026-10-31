@@ -22,6 +22,7 @@ export default function ProfessionalDxfViewer({
   const selectionEnabledRef=useRef(false);
   const scenePointsRef=useRef<Array<{x:number;y:number}>>([]);
   const drawingPointsRef=useRef<Array<{x:number;y:number}>>([]);
+  const dragStartRef=useRef<{x:number;y:number}|null>(null);
   const onSelectionRef=useRef(onSelection);
   onSelectionRef.current=onSelection;
 
@@ -34,6 +35,7 @@ export default function ProfessionalDxfViewer({
   const [selectMode,setSelectMode]=useState(false);
   const [selectionText,setSelectionText]=useState("");
   const [screenPoints,setScreenPoints]=useState<Array<{x:number;y:number}>>([]);
+  const [dragBox,setDragBox]=useState<{left:number;top:number;width:number;height:number}|null>(null);
 
   useEffect(()=>{
     const host=hostRef.current;
@@ -41,7 +43,6 @@ export default function ProfessionalDxfViewer({
 
     let disposed=false;
     let viewer:any=null;
-    let handlePick:any=null;
     let handleView:any=null;
 
     const updateScreenPolygon=()=>{
@@ -97,72 +98,7 @@ export default function ProfessionalDxfViewer({
 
         if(disposed) return;
 
-        handlePick=(ev:any)=>{
-          if(!selectionEnabledRef.current) return;
-
-          const canvas=viewer.GetCanvas?.();
-          const domEvent=ev?.domEvent as PointerEvent | undefined;
-          if(!canvas || !domEvent) {
-            setSelectionText("Koordinat alınamadı. Tekrar deneyin.");
-            return;
-          }
-
-          const rect=canvas.getBoundingClientRect();
-          const localX=domEvent.clientX-rect.left;
-          const localY=domEvent.clientY-rect.top;
-
-          const sceneRaw=viewer.CanvasToSceneCoord(localX,localY);
-          const scenePoint={
-            x:Number(sceneRaw?.x),
-            y:Number(sceneRaw?.y)
-          };
-
-          if(!Number.isFinite(scenePoint.x) || !Number.isFinite(scenePoint.y)) {
-            setSelectionText("Geçerli CAD koordinatı alınamadı. Tekrar deneyin.");
-            return;
-          }
-
-          const origin=viewer.GetOrigin?.() || {x:0,y:0};
-          const drawingPoint={
-            x:scenePoint.x+Number(origin.x||0),
-            y:scenePoint.y+Number(origin.y||0)
-          };
-
-          scenePointsRef.current=[...scenePointsRef.current,scenePoint];
-          drawingPointsRef.current=[...drawingPointsRef.current,drawingPoint];
-          updateScreenPolygon();
-
-          const count=drawingPointsRef.current.length;
-          if(count<4){
-            setSelectionText(`${count}. köşe seçildi · ${4-count} köşe kaldı`);
-            return;
-          }
-
-          const polygon=drawingPointsRef.current.slice(0,4);
-          const xs=polygon.map(p=>p.x), ys=polygon.map(p=>p.y);
-          const bounds={
-            minX:Math.min(...xs),maxX:Math.max(...xs),
-            minY:Math.min(...ys),maxY:Math.max(...ys)
-          };
-
-          const width=bounds.maxX-bounds.minX;
-          const height=bounds.maxY-bounds.minY;
-          if(width<=1e-6 || height<=1e-6){
-            scenePointsRef.current=[];
-            drawingPointsRef.current=[];
-            setScreenPoints([]);
-            setSelectionText("Seçim alanı geçersiz. 4 farklı köşeyi yeniden seçin.");
-            return;
-          }
-
-          selectionEnabledRef.current=false;
-          setSelectMode(false);
-          setSelectionText(`4 köşe seçildi · alan: ${width.toFixed(2)} × ${height.toFixed(2)} CAD birimi`);
-          onSelectionRef.current?.({polygon,bounds});
-        };
-
         handleView=()=>updateScreenPolygon();
-        viewer.Subscribe("pointerdown",handlePick);
         viewer.Subscribe("viewChanged",handleView);
         viewer.Subscribe("resized",handleView);
 
@@ -192,7 +128,6 @@ export default function ProfessionalDxfViewer({
     return ()=>{
       disposed=true;
       try{
-        if(viewer && handlePick) viewer.Unsubscribe?.("pointerdown",handlePick);
         if(viewer && handleView) {
           viewer.Unsubscribe?.("viewChanged",handleView);
           viewer.Unsubscribe?.("resized",handleView);
@@ -239,10 +174,99 @@ export default function ProfessionalDxfViewer({
   function startSelection(){
     scenePointsRef.current=[];
     drawingPointsRef.current=[];
+    dragStartRef.current=null;
     setScreenPoints([]);
+    setDragBox(null);
     selectionEnabledRef.current=true;
     setSelectMode(true);
-    setSelectionText("1/4 · Kat planının ilk köşesine tıklayın.");
+    setSelectionText("Sol tuşa basılı tutup modellemek istediğiniz kat planını kutu içine alın.");
+  }
+
+  function pointerToScene(clientX:number,clientY:number){
+    const v=viewerRef.current;
+    const canvas=v?.GetCanvas?.();
+    if(!v||!canvas) return null;
+    const rect=canvas.getBoundingClientRect();
+    const localX=clientX-rect.left;
+    const localY=clientY-rect.top;
+    const p=v.CanvasToSceneCoord(localX,localY);
+    if(!Number.isFinite(Number(p?.x))||!Number.isFinite(Number(p?.y))) return null;
+    return {x:Number(p.x),y:Number(p.y),localX,localY};
+  }
+
+  function handleDragStart(ev:React.PointerEvent<HTMLDivElement>){
+    if(!selectMode) return;
+    ev.currentTarget.setPointerCapture(ev.pointerId);
+    const p=pointerToScene(ev.clientX,ev.clientY);
+    if(!p) return;
+    dragStartRef.current={x:p.localX,y:p.localY};
+    setDragBox({left:p.localX,top:p.localY,width:0,height:0});
+    setSelectionText("Alan seçiliyor… mouse tuşunu bırakınca seçim tamamlanacak.");
+  }
+
+  function handleDragMove(ev:React.PointerEvent<HTMLDivElement>){
+    if(!selectMode||!dragStartRef.current) return;
+    const p=pointerToScene(ev.clientX,ev.clientY);
+    if(!p) return;
+    const s=dragStartRef.current;
+    setDragBox({
+      left:Math.min(s.x,p.localX),
+      top:Math.min(s.y,p.localY),
+      width:Math.abs(p.localX-s.x),
+      height:Math.abs(p.localY-s.y)
+    });
+  }
+
+  function handleDragEnd(ev:React.PointerEvent<HTMLDivElement>){
+    if(!selectMode||!dragStartRef.current) return;
+    const v=viewerRef.current;
+    const canvas=v?.GetCanvas?.();
+    const end=pointerToScene(ev.clientX,ev.clientY);
+    if(!v||!canvas||!end) return;
+
+    const s=dragStartRef.current;
+    const a=v.CanvasToSceneCoord(s.x,s.y);
+    const b=v.CanvasToSceneCoord(end.localX,end.localY);
+    const origin=v.GetOrigin?.()||{x:0,y:0};
+
+    const minSceneX=Math.min(Number(a.x),Number(b.x));
+    const maxSceneX=Math.max(Number(a.x),Number(b.x));
+    const minSceneY=Math.min(Number(a.y),Number(b.y));
+    const maxSceneY=Math.max(Number(a.y),Number(b.y));
+
+    const scenePolygon=[
+      {x:minSceneX,y:minSceneY},
+      {x:maxSceneX,y:minSceneY},
+      {x:maxSceneX,y:maxSceneY},
+      {x:minSceneX,y:maxSceneY}
+    ];
+    const polygon=scenePolygon.map(p=>({
+      x:p.x+Number(origin.x||0),
+      y:p.y+Number(origin.y||0)
+    }));
+    const xs=polygon.map(p=>p.x),ys=polygon.map(p=>p.y);
+    const bounds={
+      minX:Math.min(...xs),maxX:Math.max(...xs),
+      minY:Math.min(...ys),maxY:Math.max(...ys)
+    };
+    const width=bounds.maxX-bounds.minX;
+    const height=bounds.maxY-bounds.minY;
+
+    if(width<=1e-6||height<=1e-6){
+      setSelectionText("Seçim çok küçük. Alanı yeniden sürükleyerek seçin.");
+      dragStartRef.current=null;
+      setDragBox(null);
+      return;
+    }
+
+    scenePointsRef.current=scenePolygon;
+    drawingPointsRef.current=polygon;
+    setScreenPoints(scenePolygon.map(p=>v.SceneToCanvasCoord(p.x,p.y)));
+    dragStartRef.current=null;
+    selectionEnabledRef.current=false;
+    setSelectMode(false);
+    setSelectionText(`Seçim hazır · ${width.toFixed(2)} × ${height.toFixed(2)} CAD birimi`);
+    onSelectionRef.current?.({polygon,bounds});
   }
 
   const polygonPoints=screenPoints.map(p=>`${p.x},${p.y}`).join(" ");
@@ -273,20 +297,36 @@ export default function ProfessionalDxfViewer({
         <button type="button" onClick={()=>zoom(0.8)} style={btn}>Yakınlaştır +</button>
         <button type="button" onClick={()=>zoom(1.25)} style={btn}>Uzaklaştır −</button>
         <button type="button" onClick={fit} style={btn}>Ekrana sığdır</button>
-        <button type="button" onClick={startSelection} style={{...btn,background:selectMode?"#176be0":"#fff",color:selectMode?"#fff":"#174b86"}}>4 köşe ile plan seç</button>
+        <button type="button" onClick={startSelection} style={{...btn,background:selectMode?"#176be0":"#fff",color:selectMode?"#fff":"#174b86"}}>Alanı sürükleyerek seç</button>
         <span style={{marginLeft:"auto",fontSize:11,color:selectMode?"#176be0":"#64748b"}}>{selectionText || status}</span>
       </div>
 
       <div style={{position:"relative"}}>
         <div ref={hostRef} style={{width:"100%",height:570,position:"relative",overflow:"hidden",cursor:selectMode?"crosshair":"default"}}/>
-        {screenPoints.length>0&&<svg style={{position:"absolute",inset:0,width:"100%",height:"570px",pointerEvents:"none",zIndex:6}}>
-          {screenPoints.length>=3&&<polygon points={polygonPoints} fill="rgba(23,107,224,.18)" stroke="#176be0" strokeWidth="2"/>}
-          {screenPoints.length===2&&<polyline points={polygonPoints} fill="none" stroke="#176be0" strokeWidth="2"/>}
-          {screenPoints.map((p,i)=><g key={i}>
-            <circle cx={p.x} cy={p.y} r="7" fill="#176be0" stroke="white" strokeWidth="2"/>
-            <text x={p.x+10} y={p.y-10} fontSize="13" fontWeight="800" fill="#176be0">{i+1}</text>
-          </g>)}
-          {screenPoints.length===4&&<polygon points={polygonPoints} fill="url(#scanFill)" stroke="#176be0" strokeWidth="3"/>}
+
+        <div
+          onPointerDown={handleDragStart}
+          onPointerMove={handleDragMove}
+          onPointerUp={handleDragEnd}
+          style={{
+            position:"absolute",inset:0,height:570,zIndex:7,
+            pointerEvents:selectMode?"auto":"none",
+            cursor:selectMode?"crosshair":"default",
+            touchAction:"none"
+          }}
+        />
+
+        {dragBox&&<div style={{
+          position:"absolute",
+          left:dragBox.left,top:dragBox.top,width:dragBox.width,height:dragBox.height,
+          border:"2px solid #176be0",
+          background:"repeating-linear-gradient(135deg, rgba(23,107,224,.18) 0 10px, rgba(89,169,255,.28) 10px 20px)",
+          boxShadow:"0 0 0 1px rgba(255,255,255,.65) inset",
+          pointerEvents:"none",zIndex:8
+        }}/>}
+
+        {!selectMode&&screenPoints.length===4&&<svg style={{position:"absolute",inset:0,width:"100%",height:"570px",pointerEvents:"none",zIndex:6}}>
+          <polygon points={polygonPoints} fill="url(#scanFill)" stroke="#176be0" strokeWidth="3"/>
           <defs>
             <pattern id="scanFill" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
               <rect width="12" height="12" fill="rgba(23,107,224,.12)"/>

@@ -49,8 +49,6 @@ export default function CadProjectPreview({parts}:{parts:ProjectGlbPart[]}){
     scene.add(group);
 
     let cancelled=false;
-    const baseOrigin=parts.find(p=>p.origin)?.origin || {x:0,y:0};
-
     const jobs=parts.map(part=>new Promise<void>((resolve,reject)=>{
       const bytes=Uint8Array.from(atob(part.base64),ch=>ch.charCodeAt(0));
       const blob=new Blob([bytes],{type:"model/gltf-binary"});
@@ -61,10 +59,12 @@ export default function CadProjectPreview({parts}:{parts:ProjectGlbPart[]}){
         if(cancelled){resolve();return;}
         const model=gltf.scene;
         model.rotation.x=-Math.PI/2;
-        const origin=part.origin || baseOrigin;
-        model.position.x=origin.x-baseOrigin.x;
+        // Every floor GLB is already normalized around its own local origin.
+        // Assemble by stacking only on elevation; applying CAD origin offsets here
+        // would separate floors horizontally for plans drawn side-by-side on the sheet.
+        model.position.x=0;
         model.position.y=part.elevation;
-        model.position.z=-(origin.y-baseOrigin.y);
+        model.position.z=0;
         model.name=part.name;
         model.traverse(obj=>{
           const mesh=obj as THREE.Mesh;

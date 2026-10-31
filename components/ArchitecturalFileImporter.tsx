@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { ACCEPTED_ARCHITECTURAL_EXTENSIONS, CAD_FORMATS, getCadFormat } from "@/lib/cad/formats";
-import { analyzeDxfText, type CadSemanticAnalysis } from "@/lib/cad/semanticAnalyzer";
+import { analyzeDxfText, type CadSemanticAnalysis, type CadSelectionBounds } from "@/lib/cad/semanticAnalyzer";
 
 const ThreeFilePreview = dynamic(
   () => import("@/components/Architectural3DPreview").then(m => m.ThreeFilePreview),
@@ -128,12 +128,14 @@ export default function ArchitecturalFileImporter(){
   const [analysisProgress,setAnalysisProgress]=useState(0);
   const [floorHeight,setFloorHeight]=useState(3.0);
   const [wallThickness,setWallThickness]=useState(0.20);
+  const [selection,setSelection]=useState<CadSelectionBounds|null>(null);
+  const [unitMode,setUnitMode]=useState<"mm"|"cm"|"m">("mm");
 
   const fmt=useMemo(()=>file?getCadFormat(file.name):null,[file]);
 
   async function loadFile(next:File|null){
     if(objectUrl) URL.revokeObjectURL(objectUrl);
-    setObjectUrl(null); setDxf(null); setDxfText(""); setAnalysis(null); setMessage(""); setFile(next);
+    setObjectUrl(null); setDxf(null); setDxfText(""); setAnalysis(null); setSelection(null); setMessage(""); setFile(next);
     if(!next)return;
     const info=getCadFormat(next.name);
     if(!info){setMessage("Bu dosya uzantisi henuz desteklenmiyor.");return;}
@@ -175,18 +177,22 @@ export default function ArchitecturalFileImporter(){
 
   async function createInteractiveModel(){
     if(!dxfText) return;
+    if(!selection){
+      setMessage("Önce CAD ekranındaki '3D için alan seç' düğmesiyle yalnızca kat planını seçin.");
+      return;
+    }
     setAnalysisBusy(true);
     setAnalysisProgress(8);
     try{
       await new Promise(r=>setTimeout(r,80));
       setAnalysisProgress(28);
-      const result=analyzeDxfText(dxfText);
+      const result=analyzeDxfText(dxfText,selection);
       await new Promise(r=>setTimeout(r,80));
       setAnalysisProgress(72);
       setAnalysis(result);
       await new Promise(r=>setTimeout(r,80));
       setAnalysisProgress(100);
-      setMessage("Mimari proje analiz edildi. Tanınan elemanlardan sadık 3D teknik model oluşturuldu.");
+      setMessage("Seçilen kat planı analiz edildi. Kesit/görünüşler dışarıda bırakıldı ve tanınan elemanlardan 3D teknik model oluşturuldu.");
     }catch(e){
       setMessage(e instanceof Error?e.message:String(e));
     }finally{
@@ -194,7 +200,24 @@ export default function ArchitecturalFileImporter(){
     }
   }
 
-  return <main style={{minHeight:"100vh",background:"#eef5ff",padding:24,color:"#10396d",fontFamily:"Inter,Arial,sans-serif"}}>
+  return <main style={{minHeight:"100vh",background:"#eef5ff",padding:24,color:"#10396d",fontFamily:"Inter,Arial,sans-serif",position:"relative"}}>
+    {analysisBusy&&<div style={{
+      position:"fixed",inset:0,zIndex:9999,display:"grid",placeItems:"center",
+      background:"rgba(5,17,30,.96)",backdropFilter:"blur(5px)"
+    }}>
+      <div style={{width:"min(560px,84vw)",textAlign:"center",color:"#fff"}}>
+        <div style={{fontSize:12,letterSpacing:".22em",color:"#79b6ff",marginBottom:10}}>EMLAK CAFE AI</div>
+        <div style={{fontSize:34,fontWeight:900,marginBottom:8}}>3D model hazırlanıyor</div>
+        <div style={{fontSize:13,color:"#b7cbe0",marginBottom:18}}>
+          {analysisProgress<30?"Seçilen kat planı okunuyor":analysisProgress<70?"Duvar, kolon, kapı ve pencere verileri ayrıştırılıyor":"3D geometri oluşturuluyor"}
+        </div>
+        <div style={{height:13,borderRadius:99,overflow:"hidden",background:"#18334f",border:"1px solid #315d88"}}>
+          <div style={{height:"100%",width:`${analysisProgress}%`,background:"linear-gradient(90deg,#1268e8,#65b8ff)",transition:"width .2s ease"}}/>
+        </div>
+        <div style={{fontSize:24,fontWeight:900,marginTop:9}}>%{analysisProgress}</div>
+        <div style={{fontSize:11,color:"#7e9ab6",marginTop:14}}>Çizimde bulunmayan mimari bilgi üretilmez.</div>
+      </div>
+    </div>}
     <header style={{display:"flex",justifyContent:"space-between",gap:16,alignItems:"flex-end",marginBottom:18}}>
       <div><div style={{fontSize:11,letterSpacing:".16em",color:"#607b9d"}}>EMLAK CAFE AI · CAD / BIM</div><h1 style={{margin:"6px 0",fontSize:34}}>Mimari Proje İçe Aktar</h1><p style={{margin:0,color:"#6b82a0"}}>Mimar ve mühendislerin kullandığı proje dosyalarını tek çalışma alanında açın.</p></div>
       <a href="/arsa-gelistirme" style={{padding:"10px 14px",border:"1px solid #a9c0de",borderRadius:8,background:"#fff",color:"#194f8c",textDecoration:"none"}}>Arsa geliştirmeye dön</a>
@@ -215,9 +238,19 @@ export default function ArchitecturalFileImporter(){
           <label style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>Kat yüksekliği (m)
             <input type="number" step=".05" min="2" max="8" value={floorHeight} onChange={e=>setFloorHeight(Number(e.target.value)||3)} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}/>
           </label>
-          <label style={{display:"grid",gap:5,fontSize:11,marginBottom:10}}>Duvar kalınlığı (m)
+          <label style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>Duvar kalınlığı (m)
             <input type="number" step=".01" min=".08" max="1" value={wallThickness} onChange={e=>setWallThickness(Number(e.target.value)||.2)} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}/>
           </label>
+          <label style={{display:"grid",gap:5,fontSize:11,marginBottom:10}}>CAD birimi
+            <select value={unitMode} onChange={e=>setUnitMode(e.target.value as "mm"|"cm"|"m")} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}>
+              <option value="mm">Milimetre (mm)</option>
+              <option value="cm">Santimetre (cm)</option>
+              <option value="m">Metre (m)</option>
+            </select>
+          </label>
+          <div style={{fontSize:10,padding:8,borderRadius:7,background:selection?"#eaf7ef":"#fff3df",color:selection?"#28653b":"#8a5a13",marginBottom:10}}>
+            {selection?"3D alanı seçildi. Yalnızca bu plan analiz edilecek.":"Önce CAD ekranında '3D için alan seç' ile kat planını seçin."}
+          </div>
           <button type="button" onClick={createInteractiveModel} disabled={analysisBusy} style={{
             width:"100%",padding:"12px 10px",border:0,borderRadius:9,background:"#176be0",color:"#fff",fontWeight:800,cursor:"pointer"
           }}>{analysisBusy?`Emlak Cafe AI analiz ediyor · %${analysisProgress}`:"İnteraktif 360 Sanal Maketini Oluştur"}</button>
@@ -234,7 +267,7 @@ export default function ArchitecturalFileImporter(){
 
       <section style={{background:"#fff",border:"1px solid #bfd1ea",borderRadius:14,padding:14,minWidth:0}}>
         {!file&&<div style={{minHeight:560,display:"grid",placeItems:"center",color:"#7a8da7"}}>DWG, DXF, IFC veya 3B proje dosyanızı seçin.</div>}
-        {dxfText&&<ProfessionalDxfViewer text={dxfText}/>}
+        {dxfText&&<ProfessionalDxfViewer text={dxfText} onSelection={bounds=>{setSelection(bounds);setAnalysis(null);setMessage("3D üretim alanı seçildi. Şimdi İnteraktif 360 Sanal Maketini Oluştur butonuna basın.");}}/>}
         {analysis&&<div style={{marginTop:16}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,marginBottom:12}}>
             {[
@@ -248,7 +281,7 @@ export default function ArchitecturalFileImporter(){
             {analysis.warnings.map(w=><div key={w}>• {w}</div>)}
           </div>}
           <h2 style={{fontSize:20,margin:"10px 0"}}>Projeye Sadık 3D Teknik Önizleme</h2>
-          <CadSemantic3DPreview analysis={analysis} floorHeight={floorHeight} wallThickness={wallThickness}/>
+          <CadSemantic3DPreview analysis={analysis} floorHeight={floorHeight} wallThickness={wallThickness} unitScale={unitMode==="mm"?.001:unitMode==="cm"?.01:1}/>
         </div>}
         {file && [".glb",".gltf",".obj",".stl"].includes(fmt?.ext||"") && <ThreeFilePreview file={file}/>}
         {objectUrl && fmt?.ext===".svg" && <img src={objectUrl} alt="SVG mimari plan önizlemesi" style={{maxWidth:"100%",maxHeight:720,display:"block",margin:"auto"}}/>}

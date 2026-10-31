@@ -5,7 +5,10 @@ import * as THREE from "three";
 
 type LayerState = { name:string; visible:boolean };
 
-export default function ProfessionalDxfViewer({ text }:{ text:string }) {
+export default function ProfessionalDxfViewer({
+  text,
+  onSelection
+}:{ text:string; onSelection?: (bounds:{minX:number;minY:number;maxX:number;maxY:number})=>void }) {
   const hostRef=useRef<HTMLDivElement|null>(null);
   const viewerRef=useRef<any>(null);
   const urlRef=useRef<string|null>(null);
@@ -15,6 +18,9 @@ export default function ProfessionalDxfViewer({ text }:{ text:string }) {
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState("");
   const [viewWidth,setViewWidth]=useState<number|null>(null);
+  const [selectMode,setSelectMode]=useState(false);
+  const [selectionText,setSelectionText]=useState("");
+  const selectStartRef=useRef<{x:number;y:number}|null>(null);
 
   useEffect(()=>{
     const host=hostRef.current;
@@ -67,6 +73,27 @@ export default function ProfessionalDxfViewer({ text }:{ text:string }) {
         });
 
         if(disposed) return;
+
+        const handleDown=(ev:any)=>{
+          if(!selectMode) return;
+          selectStartRef.current={x:Number(ev.position?.x||0),y:Number(ev.position?.y||0)};
+          setSelectionText("Alan seçiliyor… karşı köşeye tıklayın.");
+        };
+        const handleUp=(ev:any)=>{
+          if(!selectMode || !selectStartRef.current) return;
+          const end={x:Number(ev.position?.x||0),y:Number(ev.position?.y||0)};
+          const start=selectStartRef.current;
+          const bounds={
+            minX:Math.min(start.x,end.x), maxX:Math.max(start.x,end.x),
+            minY:Math.min(start.y,end.y), maxY:Math.max(start.y,end.y)
+          };
+          selectStartRef.current=null;
+          setSelectMode(false);
+          setSelectionText("3D üretim alanı seçildi.");
+          onSelection?.(bounds);
+        };
+        viewer.Subscribe("pointerdown",handleDown);
+        viewer.Subscribe("pointerup",handleUp);
 
         const nextLayers=Array.from(viewer.GetLayers(true) as Iterable<any>).map((l:any)=>({
           name:String(l.name),
@@ -152,7 +179,8 @@ export default function ProfessionalDxfViewer({ text }:{ text:string }) {
         <button type="button" onClick={()=>zoom(0.8)} style={btn}>Yakınlaştır +</button>
         <button type="button" onClick={()=>zoom(1.25)} style={btn}>Uzaklaştır −</button>
         <button type="button" onClick={fit} style={btn}>Ekrana sığdır</button>
-        <span style={{marginLeft:"auto",fontSize:11,color:"#64748b"}}>{status}</span>
+        <button type="button" onClick={()=>{setSelectMode(true);setSelectionText("Kat planının bir köşesine tıklayın, sonra karşı köşeye tıklayın.");}} style={{...btn,background:selectMode?"#176be0":"#fff",color:selectMode?"#fff":"#174b86"}}>3D için alan seç</button>
+        <span style={{marginLeft:"auto",fontSize:11,color:selectMode?"#176be0":"#64748b"}}>{selectionText || status}</span>
       </div>
       <div ref={hostRef} style={{width:"100%",height:570,position:"relative",overflow:"hidden"}}/>
     </section>

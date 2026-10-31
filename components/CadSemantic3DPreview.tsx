@@ -99,7 +99,14 @@ export default function CadSemantic3DPreview({
       const floorHeight=floor.height;
       const baseY=floor.elevation;
 
-      const slabBox=floor.analysis.bounds;
+      const recognizedCount =
+        floor.analysis.counts.wall +
+        floor.analysis.counts.column +
+        floor.analysis.counts.door +
+        floor.analysis.counts.window +
+        floor.analysis.counts.stair;
+
+      const slabBox=recognizedCount>0 ? floor.analysis.bounds : null;
       if(slabBox){
         const w=(slabBox.maxX-slabBox.minX)*unitScale;
         const d=(slabBox.maxY-slabBox.minY)*unitScale;

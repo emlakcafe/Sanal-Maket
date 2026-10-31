@@ -1,11 +1,15 @@
 $ErrorActionPreference = "Stop"
 
-Set-Location (Split-Path -Parent $PSScriptRoot)
-Set-Location ..
+$projectRoot = Split-Path -Parent $PSScriptRoot
+Set-Location $projectRoot
 
-$venv = Join-Path (Get-Location) ".venv-cad"
+$venv = Join-Path $projectRoot ".venv-cad"
 $python = Join-Path $venv "Scripts\python.exe"
-$requirements = Join-Path (Get-Location) "scripts\cad\requirements.txt"
+$requirements = Join-Path $projectRoot "scripts\cad\requirements.txt"
+
+if (-not (Test-Path $requirements)) {
+  throw "requirements.txt bulunamadi: $requirements"
+}
 
 Write-Host "Emlak Cafe CAD motoru hazırlanıyor..."
 

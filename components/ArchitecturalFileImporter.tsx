@@ -13,6 +13,7 @@ const ProfessionalDxfViewer = dynamic(() => import("@/components/ProfessionalDxf
 const CadSemantic3DPreview = dynamic(() => import("@/components/CadSemantic3DPreview"), { ssr: false });
 const CadGlbPreview = dynamic(() => import("@/components/CadGlbPreview"), { ssr: false });
 const CadProjectPreview = dynamic(() => import("@/components/CadProjectPreview"), { ssr: false });
+const CadIfcPreview = dynamic(() => import("@/components/CadIfcPreview"), { ssr: false });
 
 type Pt = { x:number; y:number };
 type BuiltFloor = {
@@ -199,6 +200,7 @@ export default function ArchitecturalFileImporter(){
   const [nextFloorIndex,setNextFloorIndex]=useState(1);
   const [projectAssembled,setProjectAssembled]=useState(false);
   const [manualSnapshotAt,setManualSnapshotAt]=useState<string>("");
+  const [ifcBim,setIfcBim]=useState<{base64:string;walls:number;bytes:number;schema?:string}|null>(null);
   const previewAnchorRef=useRef<HTMLDivElement|null>(null);
   const sessionHydratedRef=useRef(false);
 
@@ -225,6 +227,7 @@ export default function ArchitecturalFileImporter(){
       wallThickness,
       dxfText,
       message,
+      ifcBim,
       savedAt:new Date().toISOString()
     };
   }
@@ -281,7 +284,7 @@ export default function ArchitecturalFileImporter(){
 
   async function loadFile(next:File|null){
     if(objectUrl) URL.revokeObjectURL(objectUrl);
-    setObjectUrl(null); setDxf(null); setDxfText(""); setAnalysis(null); setSelection(null); setBuiltFloors([]); setBuildStep("ground-select"); setNextFloorIndex(1); setProjectAssembled(false); setMessage(""); setFile(next);
+    setObjectUrl(null); setDxf(null); setDxfText(""); setAnalysis(null); setSelection(null); setBuiltFloors([]); setBuildStep("ground-select"); setNextFloorIndex(1); setProjectAssembled(false); setIfcBim(null); setMessage(""); setFile(next);
     if(!next)return;
     const info=getCadFormat(next.name);
     if(!info){setMessage("Bu dosya uzantisi henuz desteklenmiyor.");return;}
@@ -318,6 +321,70 @@ export default function ArchitecturalFileImporter(){
       setMessage(e instanceof Error?e.message:String(e));
     }finally{
       setBusy(false);
+    }
+  }
+
+  async function createProfessionalBimGround(){
+    if(!dxfText) return;
+    if(!selection){
+      setMessage("Önce zemin kat planını sürükleyerek seçin.");
+      return;
+    }
+
+    setAnalysisBusy(true);
+    setIfcBim(null);
+    setAnalysis(null);
+    setAnalysisProgress(8);
+    setGenerationStage("Profesyonel BIM: CAD planı analiz ediliyor");
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+    try{
+      timer=setInterval(()=>setAnalysisProgress(prev=>Math.min(78,prev+4)),180);
+
+      const res=await fetch("/api/cad/analyze",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({dxfText,selection,unitMode})
+      });
+      if(!res.ok){
+        const err=await res.json().catch(()=>({error:"CAD analizi başarısız."}));
+        throw new Error(err.detail || err.error || "CAD analizi başarısız.");
+      }
+      const result=await res.json() as CadSemanticAnalysis;
+
+      if(timer){clearInterval(timer);timer=null;}
+      setAnalysisProgress(82);
+      setGenerationStage("IfcOpenShell: IfcWall elemanları oluşturuluyor");
+
+      const ifcRes=await fetch("/api/cad/build-ifc",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({analysis:result,floorHeight})
+      });
+      if(!ifcRes.ok){
+        const err=await ifcRes.json().catch(()=>({error:"IFC üretimi başarısız."}));
+        throw new Error(err.detail || err.error || "IFC üretimi başarısız.");
+      }
+      const out=await ifcRes.json();
+
+      setAnalysisProgress(96);
+      setGenerationStage("web-ifc: BIM modeli hazırlanıyor");
+      setAnalysis(result);
+      setIfcBim({
+        base64:out.ifcBase64,
+        walls:Number(out.walls||0),
+        bytes:Number(out.bytes||0),
+        schema:out.schema
+      });
+      setAnalysisProgress(100);
+      setGenerationStage("Profesyonel BIM zemin kat hazır");
+      setMessage(`Profesyonel BIM hazır: ${out.walls||0} IfcWall oluşturuldu. Önizlemeyi kontrol edin; doğruysa sonraki aşamada kapı/pencere ve katları IFC üzerinden devam ettireceğiz.`);
+      setTimeout(()=>previewAnchorRef.current?.scrollIntoView({behavior:"smooth",block:"start"}),60);
+    }catch(e){
+      if(timer){clearInterval(timer);timer=null;}
+      setMessage(e instanceof Error?e.message:String(e));
+    }finally{
+      setAnalysisBusy(false);
     }
   }
 
@@ -602,9 +669,20 @@ export default function ArchitecturalFileImporter(){
                         : "Mevcut kat modellemesi tamamlandı.")}
           </div>
 
-          {(buildStep==="ground-select"||buildStep==="upper-select")&&<button type="button" onClick={createCurrentFloor} disabled={analysisBusy||!selection} style={{
+          {buildStep==="ground-select"&&<div style={{display:"grid",gap:7}}>
+            <button type="button" onClick={createProfessionalBimGround} disabled={analysisBusy||!selection} style={{
+              width:"100%",padding:"12px 10px",border:0,borderRadius:9,
+              background:selection?"#117a4b":"#9db6d5",color:"#fff",fontWeight:900,cursor:selection?"pointer":"not-allowed"
+            }}>{analysisBusy?`BIM Motoru işliyor · %${analysisProgress}`:"Profesyonel BIM Motoru ile Oluştur"}</button>
+            <button type="button" onClick={createCurrentFloor} disabled={analysisBusy||!selection} style={{
+              width:"100%",padding:"9px",border:"1px solid #b7c7da",borderRadius:8,
+              background:"#fff",color:"#58718e",fontWeight:700,cursor:selection?"pointer":"not-allowed",fontSize:11
+            }}>Eski GLB motoru (yedek)</button>
+          </div>}
+
+          {buildStep==="upper-select"&&<button type="button" onClick={createCurrentFloor} disabled={analysisBusy||!selection} style={{
             width:"100%",padding:"12px 10px",border:0,borderRadius:9,background:selection?"#176be0":"#9db6d5",color:"#fff",fontWeight:800,cursor:selection?"pointer":"not-allowed"
-          }}>{analysisBusy?`Emlak Cafe AI işliyor · %${analysisProgress}`:buildStep==="ground-select"?"Zemin Kat 3D Modelini Oluştur":`${nextFloorIndex}. Katı Oluştur`}</button>}
+          }}>{analysisBusy?`Emlak Cafe AI işliyor · %${analysisProgress}`:`${nextFloorIndex}. Katı Oluştur`}</button>}
 
           {(buildStep==="ground-built"||buildStep==="upper-built")&&<div style={{display:"grid",gap:8}}>
             <button type="button" onClick={requestUpperFloor} style={{
@@ -660,6 +738,18 @@ export default function ArchitecturalFileImporter(){
             ? "Zemin kat planı seçildi. Şimdi Zemin Kat 3D Modelini Oluştur butonuna basın."
             : `${nextFloorIndex}. kat planı seçildi. Şimdi Katı Oluştur butonuna basın.`);
         }}/>}
+        {ifcBim&&<div ref={previewAnchorRef} style={{marginTop:16,scrollMarginTop:18}}>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+            <div style={{padding:"9px 11px",borderRadius:8,background:"#eaf7ef",border:"1px solid #abd5b8",fontSize:11,color:"#245d35"}}>
+              <b>Profesyonel BIM Motoru:</b> IfcOpenShell
+            </div>
+            <div style={{padding:"9px 11px",borderRadius:8,background:"#eef6ff",border:"1px solid #b7cde8",fontSize:11,color:"#244f7b"}}>
+              <b>IFC:</b> {ifcBim.schema||"IFC"} · IfcWall: {ifcBim.walls} · {Math.round(ifcBim.bytes/1024)} KB
+            </div>
+          </div>
+          <CadIfcPreview base64={ifcBim.base64}/>
+        </div>}
+
         {builtFloors.length>0&&<div ref={previewAnchorRef} style={{marginTop:16,scrollMarginTop:18}}>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
             {displayedAnalysis?.engine&&<div style={{padding:"8px 10px",borderRadius:8,background:"#e9f8ef",border:"1px solid #abd5b8",fontSize:11,color:"#245d35"}}>

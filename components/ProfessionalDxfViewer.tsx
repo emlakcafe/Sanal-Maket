@@ -22,6 +22,8 @@ export default function ProfessionalDxfViewer({
   const selectionEnabledRef=useRef(false);
   const scenePointsRef=useRef<Array<{x:number;y:number}>>([]);
   const drawingPointsRef=useRef<Array<{x:number;y:number}>>([]);
+  const onSelectionRef=useRef(onSelection);
+  onSelectionRef.current=onSelection;
 
   const [layers,setLayers]=useState<LayerState[]>([]);
   const [status,setStatus]=useState("CAD görüntüleyici hazırlanıyor...");
@@ -128,11 +130,11 @@ export default function ProfessionalDxfViewer({
           selectionEnabledRef.current=false;
           setSelectMode(false);
           setSelectionText("4 köşe seçildi · plan tarama alanı hazır.");
-          onSelection?.({polygon,bounds});
+          onSelectionRef.current?.({polygon,bounds});
         };
 
         handleView=()=>updateScreenPolygon();
-        viewer.Subscribe("pointerup",handlePick);
+        viewer.Subscribe("pointerdown",handlePick);
         viewer.Subscribe("viewChanged",handleView);
         viewer.Subscribe("resized",handleView);
 
@@ -162,19 +164,23 @@ export default function ProfessionalDxfViewer({
     return ()=>{
       disposed=true;
       try{
-        if(viewer && handlePick) viewer.Unsubscribe?.("pointerup",handlePick);
+        if(viewer && handlePick) viewer.Unsubscribe?.("pointerdown",handlePick);
         if(viewer && handleView) {
           viewer.Unsubscribe?.("viewChanged",handleView);
           viewer.Unsubscribe?.("resized",handleView);
         }
       }catch{}
-      try{ viewerRef.current?.Destroy?.(); }catch{}
+      try{
+        if(viewerRef.current && typeof viewerRef.current.Destroy==="function"){
+          viewerRef.current.Destroy();
+        }
+      }catch{}
       viewerRef.current=null;
       if(urlRef.current) URL.revokeObjectURL(urlRef.current);
       urlRef.current=null;
       if(host) host.innerHTML="";
     };
-  },[text,onSelection]);
+  },[text]);
 
   function fit(){
     const v=viewerRef.current;

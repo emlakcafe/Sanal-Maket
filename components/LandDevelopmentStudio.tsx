@@ -64,7 +64,10 @@ export default function LandDevelopmentStudio() {
   return <main className={styles.page}>
     <header className={styles.header}>
       <div><span>EMLAK CAFE AI</span><h1>Bu arsaya ne yapılabilir?</h1><p>Parsel sınırı ve imar verilerine göre konsept proje alternatifleri.</p></div>
-      <a href="/proje-sunumu">Proje sunumuna dön</a>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <a href="/proje-ice-aktar">Mimari proje yükle</a>
+        <a href="/proje-sunumu">Proje sunumuna dön</a>
+      </div>
     </header>
 
     <section className={styles.grid}>

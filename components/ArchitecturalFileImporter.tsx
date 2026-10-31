@@ -238,6 +238,7 @@ export default function ArchitecturalFileImporter(){
     if(saved.buildStep) setBuildStep(saved.buildStep);
     if(Number.isFinite(saved.nextFloorIndex)) setNextFloorIndex(saved.nextFloorIndex);
     if(typeof saved.projectAssembled==="boolean") setProjectAssembled(saved.projectAssembled);
+    if(saved.ifcBim) setIfcBim(saved.ifcBim);
     if(saved.unitMode) setUnitMode(saved.unitMode);
     if(Number.isFinite(saved.floorHeight)) setFloorHeight(saved.floorHeight);
     if(Number.isFinite(saved.wallThickness)) setWallThickness(saved.wallThickness);

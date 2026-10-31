@@ -368,7 +368,7 @@ export default function ArchitecturalFileImporter(){
           setMessage(buildStep==="ground-select"
             ? "Zemin kat planı seçildi. Şimdi Zemin Kat 3D Modelini Oluştur butonuna basın."
             : `${nextFloorIndex}. kat planı seçildi. Şimdi Katı Oluştur butonuna basın.`);
-        }}/>
+        }}/>}
         {builtFloors.length>0&&<div ref={previewAnchorRef} style={{marginTop:16,scrollMarginTop:18}}>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
             {builtFloors.map((f,i)=><div key={f.name} style={{padding:"8px 10px",borderRadius:8,background:"#eaf4ff",border:"1px solid #b9d2ef",fontSize:11}}>

@@ -42,6 +42,45 @@ type DxfShape =
   | { kind:"poly"; pts:Pt[]; closed:boolean; layer:string }
   | { kind:"circle"; c:Pt; r:number; layer:string };
 
+const CAD_SESSION_DB="emlak-cafe-cad-session-db";
+const CAD_SESSION_STORE="project";
+const CAD_SESSION_KEY="current";
+
+function openCadSessionDb():Promise<IDBDatabase>{
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open(CAD_SESSION_DB,1);
+    req.onupgradeneeded=()=>{
+      const db=req.result;
+      if(!db.objectStoreNames.contains(CAD_SESSION_STORE)) db.createObjectStore(CAD_SESSION_STORE);
+    };
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+}
+
+async function saveCadSession(value:any){
+  const db=await openCadSessionDb();
+  await new Promise<void>((resolve,reject)=>{
+    const tx=db.transaction(CAD_SESSION_STORE,"readwrite");
+    tx.objectStore(CAD_SESSION_STORE).put(value,CAD_SESSION_KEY);
+    tx.oncomplete=()=>resolve();
+    tx.onerror=()=>reject(tx.error);
+  });
+  db.close();
+}
+
+async function loadCadSession(){
+  const db=await openCadSessionDb();
+  const value=await new Promise<any>((resolve,reject)=>{
+    const tx=db.transaction(CAD_SESSION_STORE,"readonly");
+    const req=tx.objectStore(CAD_SESSION_STORE).get(CAD_SESSION_KEY);
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>reject(req.error);
+  });
+  db.close();
+  return value;
+}
+
 function colorForLayer(layer:string) {
   let hash = 0;
   for (let i=0;i<layer.length;i++) hash=(hash*31+layer.charCodeAt(i))>>>0;
@@ -163,10 +202,12 @@ export default function ArchitecturalFileImporter(){
   const sessionHydratedRef=useRef(false);
 
   useEffect(()=>{
-    try{
-      const raw=localStorage.getItem("emlak-cafe-cad-project-session-v1");
-      if(raw){
-        const saved=JSON.parse(raw);
+    let cancelled=false;
+    (async()=>{
+      try{
+        const saved=await loadCadSession();
+        if(cancelled||!saved) return;
+
         if(Array.isArray(saved.builtFloors)) setBuiltFloors(saved.builtFloors);
         if(saved.buildStep) setBuildStep(saved.buildStep);
         if(Number.isFinite(saved.nextFloorIndex)) setNextFloorIndex(saved.nextFloorIndex);
@@ -174,16 +215,25 @@ export default function ArchitecturalFileImporter(){
         if(saved.unitMode) setUnitMode(saved.unitMode);
         if(Number.isFinite(saved.floorHeight)) setFloorHeight(saved.floorHeight);
         if(Number.isFinite(saved.wallThickness)) setWallThickness(saved.wallThickness);
-        if(saved.message) setMessage(saved.message);
+        if(typeof saved.dxfText==="string" && saved.dxfText){
+          setDxfText(saved.dxfText);
+          try{ setDxf(await parseDxf(saved.dxfText)); }catch{}
+        }
+        setMessage(saved.message || "Kaydedilmiş proje oturumu geri yüklendi.");
+        try{ localStorage.removeItem("emlak-cafe-cad-project-session-v1"); }catch{}
+      }catch{
+        // IndexedDB unavailable: keep app usable without persistence.
+      }finally{
+        sessionHydratedRef.current=true;
       }
-    }catch{}
-    sessionHydratedRef.current=true;
+    })();
+    return ()=>{cancelled=true;};
   },[]);
 
   useEffect(()=>{
     if(!sessionHydratedRef.current) return;
-    try{
-      localStorage.setItem("emlak-cafe-cad-project-session-v1",JSON.stringify({
+    const timer=setTimeout(()=>{
+      void saveCadSession({
         builtFloors,
         buildStep,
         nextFloorIndex,
@@ -191,11 +241,13 @@ export default function ArchitecturalFileImporter(){
         unitMode,
         floorHeight,
         wallThickness,
+        dxfText,
         message,
         savedAt:new Date().toISOString()
-      }));
-    }catch{}
-  },[builtFloors,buildStep,nextFloorIndex,projectAssembled,unitMode,floorHeight,wallThickness,message]);
+      }).catch(()=>undefined);
+    },250);
+    return ()=>clearTimeout(timer);
+  },[builtFloors,buildStep,nextFloorIndex,projectAssembled,unitMode,floorHeight,wallThickness,dxfText,message]);
 
   const fmt=useMemo(()=>file?getCadFormat(file.name):null,[file]);
   const displayedAnalysis=analysis ?? (builtFloors.length ? builtFloors[builtFloors.length-1].analysis : null);
@@ -481,7 +533,7 @@ export default function ArchitecturalFileImporter(){
         {message&&<div style={{marginTop:12,padding:10,borderRadius:9,background:"#edf5ff",fontSize:12,lineHeight:1.45}}>{busy?"İşleniyor…":message}</div>}
         {dxfText&&<div style={{marginTop:14,padding:12,border:"1px solid #b8cce6",borderRadius:10,background:"#f8fbff"}}>
           <b style={{display:"block",fontSize:13,marginBottom:9}}>3D Model Ayarları</b>
-          <div style={{fontSize:10,color:"#54708f",marginBottom:8}}>Proje oturumu otomatik kaydedilir; sayfa yenilense bile oluşturulan katlar geri yüklenir.</div>
+          <div style={{fontSize:10,color:"#54708f",marginBottom:8}}>Proje oturumu IndexedDB'ye otomatik kaydedilir; büyük GLB katları, çatı ve CAD verisi sayfa yenilense bile geri yüklenir.</div>
           <label style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>Kat yüksekliği (m)
             <input type="number" step=".05" min="2" max="8" value={floorHeight} onChange={e=>setFloorHeight(Number(e.target.value)||3)} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}/>
           </label>

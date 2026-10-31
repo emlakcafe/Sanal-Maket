@@ -60,24 +60,39 @@ async function parseDxf(text:string) {
 
 function DxfPreview({ shapes, layers }:{shapes:DxfShape[];layers:string[]}) {
   const allPts:Pt[]=[];
-  for(const s of shapes){
+  const MAX_PREVIEW_SHAPES = 120000;
+  const previewShapes = shapes.length > MAX_PREVIEW_SHAPES
+    ? shapes.filter((_, i) => i % Math.ceil(shapes.length / MAX_PREVIEW_SHAPES) === 0)
+    : shapes;
+
+  for(const s of previewShapes){
     if(s.kind==="line") allPts.push(s.a,s.b);
     if(s.kind==="poly") allPts.push(...s.pts);
     if(s.kind==="circle") allPts.push({x:s.c.x-s.r,y:s.c.y-s.r},{x:s.c.x+s.r,y:s.c.y+s.r});
   }
   if(!allPts.length) return <div style={{padding:24}}>DXF içinde desteklenen çizim elemanı bulunamadı.</div>;
 
-  const minX=Math.min(...allPts.map(p=>p.x)), maxX=Math.max(...allPts.map(p=>p.x));
-  const minY=Math.min(...allPts.map(p=>p.y)), maxY=Math.max(...allPts.map(p=>p.y));
+  let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+  for (const p of allPts) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
   const w=Math.max(1,maxX-minX), h=Math.max(1,maxY-minY);
   const pad=Math.max(w,h)*0.04;
   const view=`${minX-pad} ${-maxY-pad} ${w+pad*2} ${h+pad*2}`;
 
   return <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) 180px",gap:12}}>
     <div style={{background:"#f8fafc",border:"1px solid #cbd5e1",borderRadius:12,overflow:"hidden",minHeight:520}}>
+      {shapes.length > previewShapes.length && (
+        <div style={{padding:"8px 10px",fontSize:11,color:"#64748b",borderBottom:"1px solid #e2e8f0"}}>
+          Büyük DXF: performans için {previewShapes.length.toLocaleString("tr-TR")} / {shapes.length.toLocaleString("tr-TR")} çizim elemanı önizleniyor.
+        </div>
+      )}
       <svg viewBox={view} style={{width:"100%",height:520}}>
         <g transform="scale(1,-1)">
-          {shapes.map((s,i)=>{
+          {previewShapes.map((s,i)=>{
             const stroke=colorForLayer(s.layer);
             if(s.kind==="line") return <line key={i} x1={s.a.x} y1={s.a.y} x2={s.b.x} y2={s.b.y} stroke={stroke} strokeWidth={Math.max(w,h)/900}/>;
             if(s.kind==="poly") return <polyline key={i} points={s.pts.map(p=>`${p.x},${p.y}`).join(" ")} fill="none" stroke={stroke} strokeWidth={Math.max(w,h)/900} />;

@@ -59,12 +59,23 @@ export default function CadProjectPreview({parts}:{parts:ProjectGlbPart[]}){
         if(cancelled){resolve();return;}
         const model=gltf.scene;
         model.rotation.x=-Math.PI/2;
-        // Every floor GLB is already normalized around its own local origin.
-        // Assemble by stacking only on elevation; applying CAD origin offsets here
-        // would separate floors horizontally for plans drawn side-by-side on the sheet.
-        model.position.x=0;
-        model.position.y=part.elevation;
-        model.position.z=0;
+        model.updateMatrixWorld(true);
+
+        // Robust assembly: center every loaded GLB by its ACTUAL geometry bounds.
+        // This also fixes older saved GLBs that were exported with large CAD coordinates.
+        const rawBox=new THREE.Box3().setFromObject(model);
+        if(!rawBox.isEmpty()){
+          const rawCenter=rawBox.getCenter(new THREE.Vector3());
+          model.position.x-=rawCenter.x;
+          model.position.z-=rawCenter.z;
+          model.updateMatrixWorld(true);
+
+          const centeredBox=new THREE.Box3().setFromObject(model);
+          model.position.y+=part.elevation-centeredBox.min.y;
+        }else{
+          model.position.y=part.elevation;
+        }
+
         model.name=part.name;
         model.traverse(obj=>{
           const mesh=obj as THREE.Mesh;

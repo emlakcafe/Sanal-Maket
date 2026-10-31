@@ -386,6 +386,15 @@ export default function ArchitecturalFileImporter(){
               <span style={{display:"block",fontSize:10,color:"#7187a3"}}>{label}</span><b style={{fontSize:18}}>{value}</b>
             </div>)}
           </div>
+          {displayedAnalysis?.selectionDiagnostics&&<div style={{padding:10,border:"1px solid #b8cce6",background:"#f7fbff",borderRadius:9,fontSize:11,lineHeight:1.5,marginBottom:12}}>
+            <b>Koordinat Teşhisi</b>
+            <div>Seçim bounds: {JSON.stringify(displayedAnalysis.selectionDiagnostics.bounds)}</div>
+            <div style={{marginTop:6}}>
+              {displayedAnalysis.layoutDiagnostics?.map(d=><div key={d.name}>
+                <b>{d.name}</b> · recognized: {d.recognized} · total: {d.total} · bounds: {JSON.stringify(d.rawBounds)}
+              </div>)}
+            </div>
+          </div>}
           {displayedAnalysis&&displayedAnalysis.warnings.length>0&&<div style={{padding:10,border:"1px solid #e9c77d",background:"#fff8e9",borderRadius:9,fontSize:11,lineHeight:1.5,marginBottom:12}}>
             {displayedAnalysis.warnings.map(w=><div key={w}>• {w}</div>)}
           </div>}

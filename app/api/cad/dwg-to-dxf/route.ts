@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { access } from "fs/promises";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
@@ -28,7 +29,19 @@ export async function POST(request: Request) {
   const work = await mkdtemp(join(tmpdir(), "emlak-cafe-dwg-"));
   const input = join(work, "input.dwg");
   const output = join(work, "output.dxf");
-  const command = process.env.LIBREDWG_DWG2DXF_PATH || "dwg2dxf";
+  const configured = process.env.LIBREDWG_DWG2DXF_PATH?.trim();
+  const localAppData = process.env.LOCALAPPDATA?.trim();
+  const localCandidate = localAppData ? join(localAppData, "libredwg", "dwg2dxf.exe") : "";
+
+  let command = configured || "dwg2dxf";
+  if (!configured && localCandidate) {
+    try {
+      await access(localCandidate);
+      command = localCandidate;
+    } catch {
+      command = "dwg2dxf";
+    }
+  }
 
   try {
     await writeFile(input, Buffer.from(await file.arrayBuffer()));
@@ -49,7 +62,7 @@ export async function POST(request: Request) {
     const missing = error?.code === "ENOENT";
     return NextResponse.json({
       error: missing
-        ? "LibreDWG dwg2dxf bulunamadi. LIBREDWG_DWG2DXF_PATH ayarlanmalidir."
+        ? "LibreDWG dwg2dxf bulunamadi. Uygulama PATH, LIBREDWG_DWG2DXF_PATH ve %LOCALAPPDATA%\\libredwg\\dwg2dxf.exe konumlarini kontrol etti."
         : "DWG dosyasi DXF'e donusturulemedi.",
       detail: String(error?.message || error)
     }, { status: missing ? 503 : 422 });

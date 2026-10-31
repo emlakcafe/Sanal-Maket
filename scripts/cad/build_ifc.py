@@ -99,6 +99,38 @@ def main():
         return 5
 
     model.write(str(output))
+
+    # Build browser preview directly from the IFC geometry with IfcOpenShell.
+    settings=ifcopenshell.geom.settings()
+    scene=trimesh.Scene()
+    preview_meshes=0
+    preview_faces=0
+
+    for wall in model.by_type("IfcWall"):
+        try:
+            shape=ifcopenshell.geom.create_shape(settings,wall)
+            verts=np.asarray(ifcopenshell.util.shape.get_vertices(shape.geometry),dtype=float)
+            faces=np.asarray(ifcopenshell.util.shape.get_faces(shape.geometry),dtype=np.int64)
+            if verts.size==0 or faces.size==0:
+                continue
+            matrix=np.asarray(ifcopenshell.util.shape.get_shape_matrix(shape),dtype=float)
+            homo=np.concatenate([verts,np.ones((verts.shape[0],1),dtype=float)],axis=1)
+            world=(matrix @ homo.T).T[:,:3]
+            mesh=trimesh.Trimesh(vertices=world,faces=faces,process=False)
+            mesh.visual.face_colors=[198,202,208,255]
+            scene.add_geometry(mesh,node_name=f"ifc_wall_{wall.id()}",geom_name=f"ifc_wall_{wall.id()}")
+            preview_meshes+=1
+            preview_faces+=int(len(faces))
+        except Exception:
+            continue
+
+    if preview_meshes==0:
+        print(json.dumps({"error":"IFC_PREVIEW_FAILED","detail":"IFC üretildi ancak önizleme mesh'i oluşturulamadı."},ensure_ascii=False))
+        return 6
+
+    glb=scene.export(file_type="glb")
+    preview_output.write_bytes(glb)
+
     data=output.read_bytes()
     print(json.dumps({
         "ok":True,
@@ -106,7 +138,10 @@ def main():
         "walls":created,
         "skipped":skipped,
         "origin":{"x":ox,"y":oy},
-        "schema":model.schema
+        "schema":model.schema,
+        "previewBytes":len(glb),
+        "previewMeshes":preview_meshes,
+        "previewFaces":preview_faces
     }))
     return 0
 

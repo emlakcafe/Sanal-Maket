@@ -371,6 +371,9 @@ export default function ArchitecturalFileImporter(){
         }}/>}
         {builtFloors.length>0&&<div ref={previewAnchorRef} style={{marginTop:16,scrollMarginTop:18}}>
           <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+            {displayedAnalysis?.engine&&<div style={{padding:"8px 10px",borderRadius:8,background:"#e9f8ef",border:"1px solid #abd5b8",fontSize:11,color:"#245d35"}}>
+              <b>CAD Motoru:</b> {displayedAnalysis.engine}{displayedAnalysis.dxfVersion?` · ${displayedAnalysis.dxfVersion}`:""}
+            </div>}
             {builtFloors.map((f,i)=><div key={f.name} style={{padding:"8px 10px",borderRadius:8,background:"#eaf4ff",border:"1px solid #b9d2ef",fontSize:11}}>
               <b>{f.name}</b><br/>Kot: {f.elevation.toFixed(2)} m · Yükseklik: {f.height.toFixed(2)} m
             </div>)}

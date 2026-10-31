@@ -50,8 +50,12 @@ export default function CadIfcPreview({base64}:{base64:string}){
         const bytes=Uint8Array.from(atob(base64),ch=>ch.charCodeAt(0));
 
         ifcAPI=new IfcAPI();
-        ifcAPI.SetWasmPath("/api/web-ifc/");
-        await ifcAPI.Init();
+        await ifcAPI.Init(
+          (file:string)=>file.endsWith(".wasm")
+            ? "/api/web-ifc/web-ifc.wasm"
+            : file,
+          true
+        );
         if(cancelled) return;
 
         modelID=ifcAPI.OpenModel(bytes,{COORDINATE_TO_ORIGIN:true});

@@ -8,11 +8,13 @@ import type { CadSemanticAnalysis } from "@/lib/cad/semanticAnalyzer";
 export default function CadSemantic3DPreview({
   analysis,
   floorHeight,
-  wallThickness
+  wallThickness,
+  unitScale
 }:{
   analysis:CadSemanticAnalysis;
   floorHeight:number;
   wallThickness:number;
+  unitScale:number;
 }){
   const ref=useRef<HTMLDivElement|null>(null);
 
@@ -48,11 +50,12 @@ export default function CadSemantic3DPreview({
     const windowMat=new THREE.MeshPhysicalMaterial({color:0x8dbbd0,roughness:.12,transmission:.55,transparent:true,opacity:.72});
 
     const addSegment=(a:{x:number;y:number},b:{x:number;y:number},height:number,thickness:number,mat:THREE.Material,y=0)=>{
-      const dx=b.x-a.x, dz=b.y-a.y;
+      const ax=a.x*unitScale, az=a.y*unitScale, bx=b.x*unitScale, bz=b.y*unitScale;
+      const dx=bx-ax, dz=bz-az;
       const len=Math.hypot(dx,dz);
       if(!Number.isFinite(len)||len<1e-6) return;
       const mesh=new THREE.Mesh(new THREE.BoxGeometry(len,height,thickness),mat);
-      mesh.position.set((a.x+b.x)/2,y+height/2,(a.y+b.y)/2);
+      mesh.position.set((ax+bx)/2,y+height/2,(az+bz)/2);
       mesh.rotation.y=-Math.atan2(dz,dx);
       mesh.castShadow=true; mesh.receiveShadow=true;
       group.add(mesh);
@@ -65,7 +68,7 @@ export default function CadSemantic3DPreview({
       } else if(e.kind==="column"){
         if(e.center && e.radius){
           const m=new THREE.Mesh(new THREE.CylinderGeometry(e.radius,e.radius,floorHeight,24),columnMat);
-          m.position.set(e.center.x,floorHeight/2,e.center.y); group.add(m);
+          m.position.set(e.center.x*unitScale,floorHeight/2,e.center.y*unitScale); group.add(m);
         } else if(vs.length>=2){
           for(let i=0;i<vs.length-1;i++) addSegment(vs[i],vs[i+1],floorHeight,wallThickness*1.8,columnMat);
         }
@@ -105,7 +108,7 @@ export default function CadSemantic3DPreview({
     loop();
 
     return ()=>{cancelAnimationFrame(raf);ro.disconnect();controls.dispose();renderer.dispose();host.innerHTML="";};
-  },[analysis,floorHeight,wallThickness]);
+  },[analysis,floorHeight,wallThickness,unitScale]);
 
   return <div ref={ref} style={{width:"100%",height:560,border:"1px solid #cbd5e1",borderRadius:12,overflow:"hidden"}}/>;
 }

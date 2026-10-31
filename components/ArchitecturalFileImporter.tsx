@@ -11,6 +11,7 @@ const ThreeFilePreview = dynamic(
 );
 const ProfessionalDxfViewer = dynamic(() => import("@/components/ProfessionalDxfViewer"), { ssr: false });
 const CadSemantic3DPreview = dynamic(() => import("@/components/CadSemantic3DPreview"), { ssr: false });
+const CadGlbPreview = dynamic(() => import("@/components/CadGlbPreview"), { ssr: false });
 
 type Pt = { x:number; y:number };
 type BuiltFloor = {
@@ -18,6 +19,13 @@ type BuiltFloor = {
   analysis:CadSemanticAnalysis;
   elevation:number;
   height:number;
+  glbBase64?:string;
+  glbMeta?:{
+    bytes?:number;
+    wallPolygons?:number;
+    columns?:number;
+    bounds?:number[][];
+  };
 };
 
 type BuildStep = "ground-select" | "ground-built" | "upper-select" | "upper-built" | "roof-select" | "facade-select" | "complete";
@@ -223,16 +231,42 @@ export default function ArchitecturalFileImporter(){
       const result=await res.json() as CadSemanticAnalysis;
       if(timer){clearInterval(timer);timer=null;}
 
-      setAnalysisProgress(92);
+      setAnalysisProgress(90);
       setGenerationStage(buildStep==="ground-select"
-        ? "Zemin kat 3D geometrisi oluşturuluyor"
-        : `${nextFloorIndex}. kat mevcut yapının üzerine ekleniyor`);
+        ? "Zemin kat GLB modeli oluşturuluyor"
+        : `${nextFloorIndex}. kat GLB modeli oluşturuluyor`);
+
+      const glbRes=await fetch("/api/cad/build-glb",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({analysis:result,floorHeight})
+      });
+      if(!glbRes.ok){
+        const err=await glbRes.json().catch(()=>({error:"GLB üretimi başarısız."}));
+        throw new Error(err.detail || err.error || "GLB üretimi başarısız.");
+      }
+      const glb=await glbRes.json();
+
+      setAnalysisProgress(97);
+      setGenerationStage("GLB önizleme hazırlanıyor");
 
       const elevation=builtFloors.reduce((sum,f)=>sum+f.height+0.18,0);
       const name=buildStep==="ground-select" ? "Zemin Kat" : `${nextFloorIndex}. Kat`;
-      const floor:BuiltFloor={name,analysis:result,elevation,height:floorHeight};
+      const floor:BuiltFloor={
+        name,
+        analysis:result,
+        elevation,
+        height:floorHeight,
+        glbBase64:glb.glbBase64,
+        glbMeta:{
+          bytes:glb.bytes,
+          wallPolygons:glb.wallPolygons,
+          columns:glb.columns,
+          bounds:glb.bounds
+        }
+      };
 
-      await new Promise(r=>setTimeout(r,180));
+      await new Promise(r=>setTimeout(r,120));
       setBuiltFloors(prev=>[...prev,floor]);
       setAnalysis(result);
       setAnalysisProgress(100);
@@ -379,6 +413,7 @@ export default function ArchitecturalFileImporter(){
             </div>}
             {builtFloors.map((f,i)=><div key={f.name} style={{padding:"8px 10px",borderRadius:8,background:"#eaf4ff",border:"1px solid #b9d2ef",fontSize:11}}>
               <b>{f.name}</b><br/>Kot: {f.elevation.toFixed(2)} m · Yükseklik: {f.height.toFixed(2)} m
+              {f.glbMeta&&<><br/><span style={{color:"#58718e"}}>GLB: {Math.round((f.glbMeta.bytes||0)/1024)} KB · Duvar poligonu: {f.glbMeta.wallPolygons||0}</span></>}
             </div>)}
           </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,marginBottom:12}}>
@@ -401,8 +436,11 @@ export default function ArchitecturalFileImporter(){
           {displayedAnalysis&&displayedAnalysis.warnings.length>0&&<div style={{padding:10,border:"1px solid #e9c77d",background:"#fff8e9",borderRadius:9,fontSize:11,lineHeight:1.5,marginBottom:12}}>
             {displayedAnalysis.warnings.map(w=><div key={w}>• {w}</div>)}
           </div>}
-          <h2 style={{fontSize:20,margin:"10px 0"}}>Oluşturulan Katlar · Canlı 3D Önizleme</h2>
-          <CadSemantic3DPreview floors={builtFloors} wallThickness={wallThickness} unitScale={unitMode==="mm"?.001:unitMode==="cm"?.01:1}/>
+          <h2 style={{fontSize:20,margin:"10px 0"}}>Oluşturulan Katlar · GLB Önizleme</h2>
+          {builtFloors[builtFloors.length-1]?.glbBase64
+            ? <CadGlbPreview base64={builtFloors[builtFloors.length-1].glbBase64!}/>
+            : <CadSemantic3DPreview floors={builtFloors} wallThickness={wallThickness} unitScale={unitMode==="mm"?.001:unitMode==="cm"?.01:1}/>}
+
         </div>}
         {file && [".glb",".gltf",".obj",".stl"].includes(fmt?.ext||"") && <ThreeFilePreview file={file}/>}
         {objectUrl && fmt?.ext===".svg" && <img src={objectUrl} alt="SVG mimari plan önizlemesi" style={{maxWidth:"100%",maxHeight:720,display:"block",margin:"auto"}}/>}

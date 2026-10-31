@@ -13,6 +13,15 @@ const ProfessionalDxfViewer = dynamic(() => import("@/components/ProfessionalDxf
 const CadSemantic3DPreview = dynamic(() => import("@/components/CadSemantic3DPreview"), { ssr: false });
 
 type Pt = { x:number; y:number };
+type BuiltFloor = {
+  name:string;
+  analysis:CadSemanticAnalysis;
+  elevation:number;
+  height:number;
+};
+
+type BuildStep = "ground-select" | "ground-built" | "upper-select" | "upper-built" | "roof-select" | "facade-select" | "complete";
+
 type DxfShape =
   | { kind:"line"; a:Pt; b:Pt; layer:string }
   | { kind:"poly"; pts:Pt[]; closed:boolean; layer:string }
@@ -131,12 +140,16 @@ export default function ArchitecturalFileImporter(){
   const [selection,setSelection]=useState<CadSelectionRegion|null>(null);
   const [generationStage,setGenerationStage]=useState("Hazır");
   const [unitMode,setUnitMode]=useState<"mm"|"cm"|"m">("mm");
+  const [builtFloors,setBuiltFloors]=useState<BuiltFloor[]>([]);
+  const [buildStep,setBuildStep]=useState<BuildStep>("ground-select");
+  const [nextFloorIndex,setNextFloorIndex]=useState(1);
 
   const fmt=useMemo(()=>file?getCadFormat(file.name):null,[file]);
+  const displayedAnalysis=analysis ?? (builtFloors.length ? builtFloors[builtFloors.length-1].analysis : null);
 
   async function loadFile(next:File|null){
     if(objectUrl) URL.revokeObjectURL(objectUrl);
-    setObjectUrl(null); setDxf(null); setDxfText(""); setAnalysis(null); setSelection(null); setMessage(""); setFile(next);
+    setObjectUrl(null); setDxf(null); setDxfText(""); setAnalysis(null); setSelection(null); setBuiltFloors([]); setBuildStep("ground-select"); setNextFloorIndex(1); setMessage(""); setFile(next);
     if(!next)return;
     const info=getCadFormat(next.name);
     if(!info){setMessage("Bu dosya uzantisi henuz desteklenmiyor.");return;}
@@ -176,32 +189,24 @@ export default function ArchitecturalFileImporter(){
     }
   }
 
-  async function createInteractiveModel(){
+  async function createCurrentFloor(){
     if(!dxfText) return;
     if(!selection){
-      setMessage("Önce CAD ekranındaki '4 köşe ile plan seç' düğmesiyle kat planını seçin.");
+      setMessage(buildStep==="ground-select"
+        ? "Önce zemin kat planını 4 köşe ile seçin."
+        : "Önce eklemek istediğiniz üst kat planını 4 köşe ile seçin.");
       return;
     }
 
     setAnalysisBusy(true);
     setAnalysis(null);
-    setAnalysisProgress(5);
-    setGenerationStage("1/6 · Seçilen plan alanı taranıyor");
+    setAnalysisProgress(8);
+    setGenerationStage(buildStep==="ground-select" ? "Zemin kat planı okunuyor" : `${nextFloorIndex}. kat planı okunuyor`);
 
     let timer: ReturnType<typeof setInterval> | null = null;
-
     try{
       timer=setInterval(()=>{
-        setAnalysisProgress(prev=>{
-          const next=Math.min(88,prev+3);
-          if(next<22) setGenerationStage("1/6 · Seçilen plan alanı taranıyor");
-          else if(next<42) setGenerationStage("2/6 · Mimari elemanlar ayrıştırılıyor");
-          else if(next<58) setGenerationStage("3/6 · Zemin kat geometrisi hazırlanıyor");
-          else if(next<70) setGenerationStage("4/6 · Üst kat planı verileri aranıyor");
-          else if(next<82) setGenerationStage("5/6 · Çatı ve cephe verileri kontrol ediliyor");
-          else setGenerationStage("6/6 · 3D sahne hazırlanıyor");
-          return next;
-        });
+        setAnalysisProgress(prev=>Math.min(88,prev+4));
       },180);
 
       const res=await fetch("/api/cad/analyze",{
@@ -209,29 +214,60 @@ export default function ArchitecturalFileImporter(){
         headers:{"content-type":"application/json"},
         body:JSON.stringify({dxfText,selection})
       });
-
       if(!res.ok){
         const err=await res.json().catch(()=>({error:"CAD analizi basarisiz."}));
         throw new Error(err.detail || err.error || "CAD analizi basarisiz.");
       }
 
       const result=await res.json() as CadSemanticAnalysis;
-
       if(timer){clearInterval(timer);timer=null;}
-      setAnalysisProgress(92);
-      setGenerationStage("6/6 · İnteraktif 360 sahne hazırlanıyor");
-      await new Promise(r=>setTimeout(r,120));
 
+      setAnalysisProgress(92);
+      setGenerationStage(buildStep==="ground-select"
+        ? "Zemin kat 3D geometrisi oluşturuluyor"
+        : `${nextFloorIndex}. kat mevcut yapının üzerine ekleniyor`);
+
+      const elevation=builtFloors.reduce((sum,f)=>sum+f.height+0.18,0);
+      const name=buildStep==="ground-select" ? "Zemin Kat" : `${nextFloorIndex}. Kat`;
+      const floor:BuiltFloor={name,analysis:result,elevation,height:floorHeight};
+
+      await new Promise(r=>setTimeout(r,180));
+      setBuiltFloors(prev=>[...prev,floor]);
       setAnalysis(result);
       setAnalysisProgress(100);
-      setGenerationStage("Tamamlandı");
-      setMessage("Seçilen kat planı server tarafında analiz edildi. 3D model yalnızca projede okunabilen mimari verilerden oluşturuldu.");
+      setGenerationStage(`${name} tamamlandı`);
+      setSelection(null);
+
+      if(buildStep==="ground-select"){
+        setBuildStep("ground-built");
+        setMessage("Zemin kat tamamlandı. 3D önizlemeyi kontrol edin; doğruysa Üst Kat Planını Seç ile devam edin.");
+      }else{
+        setBuildStep("upper-built");
+        setMessage(`${name} tamamlandı ve alt katların üzerine eklendi. Sonraki katı ekleyebilir veya katları tamamlayabilirsiniz.`);
+        setNextFloorIndex(v=>v+1);
+      }
     }catch(e){
       if(timer){clearInterval(timer);timer=null;}
       setMessage(e instanceof Error?e.message:String(e));
     }finally{
       setAnalysisBusy(false);
     }
+  }
+
+  function requestUpperFloor(){
+    setSelection(null);
+    setAnalysis(null);
+    setBuildStep("upper-select");
+    setMessage(`${nextFloorIndex}. kat planını CAD üzerinde 4 köşe ile seçin, sonra Katı Oluştur butonuna basın.`);
+    window.scrollTo({top:0,behavior:"smooth"});
+  }
+
+  function finishFloors(){
+    setSelection(null);
+    setAnalysis(null);
+    setBuildStep("roof-select");
+    setMessage("Kat modellemesi tamamlandı. Şimdi çatı planını 4 köşe ile seçme aşamasına geçiyoruz.");
+    window.scrollTo({top:0,behavior:"smooth"});
   }
 
   return <main style={{minHeight:"100vh",background:"#eef5ff",padding:24,color:"#10396d",fontFamily:"Inter,Arial,sans-serif",position:"relative"}}>
@@ -247,18 +283,10 @@ export default function ArchitecturalFileImporter(){
           <div style={{height:"100%",width:`${analysisProgress}%`,background:"linear-gradient(90deg,#1268e8,#65b8ff)",transition:"width .2s ease"}}/>
         </div>
         <div style={{fontSize:24,fontWeight:900,marginTop:9}}>%{analysisProgress}</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginTop:16,textAlign:"left"}}>
-          {[
-            ["1","Plan tarama",5],["2","Mimari ayrıştırma",18],["3","Zemin kat",42],
-            ["4","Üst katlar",60],["5","Çatı + cephe",76],["6","360 sahne",92]
-          ].map(([no,label,at])=><div key={String(no)} style={{
-            padding:"8px",borderRadius:8,
-            border:"1px solid "+(analysisProgress>=Number(at)?"#3d7fc4":"#24415d"),
-            background:analysisProgress>=Number(at)?"#102f4d":"#0b2238",
-            color:analysisProgress>=Number(at)?"#fff":"#7892ad",fontSize:10
-          }}><b>{no}.</b> {label}</div>)}
+        <div style={{marginTop:16,padding:"10px 12px",border:"1px solid #2e567c",borderRadius:9,background:"#0d2944",fontSize:11,color:"#c2d6e8"}}>
+          Bu aşama bitmeden sonraki kata geçilmez. Her kat ayrı plan seçiminden sonra mevcut 3D yapının üzerine eklenir.
         </div>
-        <div style={{fontSize:11,color:"#7e9ab6",marginTop:14}}>Projede bulunmayan kat, çatı veya cephe bilgisi uydurulmaz; eksik olarak işaretlenir.</div>
+                <div style={{fontSize:11,color:"#7e9ab6",marginTop:14}}>Projede bulunmayan kat, çatı veya cephe bilgisi uydurulmaz; eksik olarak işaretlenir.</div>
       </div>
     </div>}
     <header style={{display:"flex",justifyContent:"space-between",gap:16,alignItems:"flex-end",marginBottom:18}}>
@@ -292,12 +320,29 @@ export default function ArchitecturalFileImporter(){
             </select>
           </label>
           <div style={{fontSize:10,padding:8,borderRadius:7,background:selection?"#eaf7ef":"#fff3df",color:selection?"#28653b":"#8a5a13",marginBottom:10}}>
-            {selection?"3D alanı seçildi. Yalnızca bu plan analiz edilecek.":"Önce CAD ekranında '3D için alan seç' ile kat planını seçin."}
+            {selection
+              ? (buildStep==="ground-select" ? "Zemin kat planı seçildi." : "Üst kat planı seçildi.")
+              : (buildStep==="ground-select" ? "Zemin kat planını 4 köşe ile seçin." : buildStep==="upper-select" ? `${nextFloorIndex}. kat planını 4 köşe ile seçin.` : "Mevcut kat modellemesi tamamlandı.")}
           </div>
-          <button type="button" onClick={createInteractiveModel} disabled={analysisBusy} style={{
-            width:"100%",padding:"12px 10px",border:0,borderRadius:9,background:"#176be0",color:"#fff",fontWeight:800,cursor:"pointer"
-          }}>{analysisBusy?`Emlak Cafe AI analiz ediyor · %${analysisProgress}`:"İnteraktif 360 Sanal Maketini Oluştur"}</button>
-          <div style={{fontSize:10,color:"#7187a3",marginTop:8,lineHeight:1.4}}>Çizimde olmayan mimari elemanlar otomatik olarak uydurulmaz.</div>
+
+          {(buildStep==="ground-select"||buildStep==="upper-select")&&<button type="button" onClick={createCurrentFloor} disabled={analysisBusy||!selection} style={{
+            width:"100%",padding:"12px 10px",border:0,borderRadius:9,background:selection?"#176be0":"#9db6d5",color:"#fff",fontWeight:800,cursor:selection?"pointer":"not-allowed"
+          }}>{analysisBusy?`Emlak Cafe AI işliyor · %${analysisProgress}`:buildStep==="ground-select"?"Zemin Kat 3D Modelini Oluştur":`${nextFloorIndex}. Katı Oluştur`}</button>}
+
+          {(buildStep==="ground-built"||buildStep==="upper-built")&&<div style={{display:"grid",gap:8}}>
+            <button type="button" onClick={requestUpperFloor} style={{
+              width:"100%",padding:"12px 10px",border:0,borderRadius:9,background:"#176be0",color:"#fff",fontWeight:800,cursor:"pointer"
+            }}>Üst Kat Planını Seç</button>
+            <button type="button" onClick={finishFloors} style={{
+              width:"100%",padding:"10px",border:"1px solid #9eb7d6",borderRadius:9,background:"#fff",color:"#174b86",fontWeight:800,cursor:"pointer"
+            }}>Katları Tamamla → Çatı Aşaması</button>
+          </div>}
+
+          {buildStep==="roof-select"&&<div style={{padding:10,borderRadius:9,background:"#fff3df",fontSize:11,color:"#7c5514"}}>
+            Katlar tamamlandı. Sonraki geliştirmede çatı planı seçimi bu aşamadan başlayacak.
+          </div>}
+
+          <div style={{fontSize:10,color:"#7187a3",marginTop:8,lineHeight:1.4}}>Her kat ayrı ayrı tamamlanır; sonraki kat ancak kullanıcı seçtikten sonra eklenir.</div>
         </div>}
 
         <h3 style={{fontSize:14,marginTop:20}}>Desteklenen formatlar</h3>
@@ -310,21 +355,36 @@ export default function ArchitecturalFileImporter(){
 
       <section style={{background:"#fff",border:"1px solid #bfd1ea",borderRadius:14,padding:14,minWidth:0}}>
         {!file&&<div style={{minHeight:560,display:"grid",placeItems:"center",color:"#7a8da7"}}>DWG, DXF, IFC veya 3B proje dosyanızı seçin.</div>}
-        {dxfText&&<ProfessionalDxfViewer text={dxfText} onSelection={region=>{setSelection(region);setAnalysis(null);setMessage("4 köşeli plan alanı seçildi ve mavi tarama ile kilitlendi. Şimdi İnteraktif 360 Sanal Maketini Oluştur butonuna basın.");}}/>}
-        {analysis&&<div style={{marginTop:16}}>
+        {dxfText&&<ProfessionalDxfViewer text={dxfText} onSelection={region=>{
+          if(buildStep==="roof-select"){
+            setMessage("Çatı planı seçildi. Çatı modelleme motoru sonraki aşamada bu seçimi kullanacak.");
+            return;
+          }
+          setSelection(region);
+          setAnalysis(null);
+          setMessage(buildStep==="ground-select"
+            ? "Zemin kat planı seçildi. Şimdi Zemin Kat 3D Modelini Oluştur butonuna basın."
+            : `${nextFloorIndex}. kat planı seçildi. Şimdi Katı Oluştur butonuna basın.`);
+        }}/>
+        {builtFloors.length>0&&<div style={{marginTop:16}}>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+            {builtFloors.map((f,i)=><div key={f.name} style={{padding:"8px 10px",borderRadius:8,background:"#eaf4ff",border:"1px solid #b9d2ef",fontSize:11}}>
+              <b>{f.name}</b><br/>Kot: {f.elevation.toFixed(2)} m · Yükseklik: {f.height.toFixed(2)} m
+            </div>)}
+          </div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,marginBottom:12}}>
             {[
-              ["Duvar",analysis.counts.wall],["Kolon",analysis.counts.column],["Kapı",analysis.counts.door],["Pencere",analysis.counts.window],
-              ["Merdiven",analysis.counts.stair],["Aks",analysis.counts.axis],["Ölçü",analysis.counts.dimension],["Metin",analysis.counts.text]
+              ["Duvar",displayedAnalysis?.counts.wall??0],["Kolon",displayedAnalysis?.counts.column??0],["Kapı",displayedAnalysis?.counts.door??0],["Pencere",displayedAnalysis?.counts.window??0],
+              ["Merdiven",displayedAnalysis?.counts.stair??0],["Aks",displayedAnalysis?.counts.axis??0],["Ölçü",displayedAnalysis?.counts.dimension??0],["Metin",displayedAnalysis?.counts.text??0]
             ].map(([label,value])=><div key={String(label)} style={{padding:10,border:"1px solid #d6e2ef",borderRadius:9,background:"#f8fbff"}}>
               <span style={{display:"block",fontSize:10,color:"#7187a3"}}>{label}</span><b style={{fontSize:18}}>{value}</b>
             </div>)}
           </div>
-          {analysis.warnings.length>0&&<div style={{padding:10,border:"1px solid #e9c77d",background:"#fff8e9",borderRadius:9,fontSize:11,lineHeight:1.5,marginBottom:12}}>
-            {analysis.warnings.map(w=><div key={w}>• {w}</div>)}
+          {displayedAnalysis&&displayedAnalysis.warnings.length>0&&<div style={{padding:10,border:"1px solid #e9c77d",background:"#fff8e9",borderRadius:9,fontSize:11,lineHeight:1.5,marginBottom:12}}>
+            {displayedAnalysis.warnings.map(w=><div key={w}>• {w}</div>)}
           </div>}
           <h2 style={{fontSize:20,margin:"10px 0"}}>Projeye Sadık 3D Teknik Önizleme</h2>
-          <CadSemantic3DPreview analysis={analysis} floorHeight={floorHeight} wallThickness={wallThickness} unitScale={unitMode==="mm"?.001:unitMode==="cm"?.01:1}/>
+          <CadSemantic3DPreview floors={builtFloors} wallThickness={wallThickness} unitScale={unitMode==="mm"?.001:unitMode==="cm"?.01:1}/>
         </div>}
         {file && [".glb",".gltf",".obj",".stl"].includes(fmt?.ext||"") && <ThreeFilePreview file={file}/>}
         {objectUrl && fmt?.ext===".svg" && <img src={objectUrl} alt="SVG mimari plan önizlemesi" style={{maxWidth:"100%",maxHeight:720,display:"block",margin:"auto"}}/>}

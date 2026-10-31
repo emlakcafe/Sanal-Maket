@@ -5,14 +5,19 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { CadSemanticAnalysis } from "@/lib/cad/semanticAnalyzer";
 
+export type BuiltFloor = {
+  name:string;
+  analysis:CadSemanticAnalysis;
+  elevation:number;
+  height:number;
+};
+
 export default function CadSemantic3DPreview({
-  analysis,
-  floorHeight,
+  floors,
   wallThickness,
   unitScale
 }:{
-  analysis:CadSemanticAnalysis;
-  floorHeight:number;
+  floors:BuiltFloor[];
   wallThickness:number;
   unitScale:number;
 }){
@@ -61,22 +66,46 @@ export default function CadSemantic3DPreview({
       group.add(mesh);
     };
 
-    for(const e of analysis.entities){
-      const vs=e.vertices||[];
-      if(e.kind==="wall" && vs.length>=2){
-        for(let i=0;i<vs.length-1;i++) addSegment(vs[i],vs[i+1],floorHeight,wallThickness,wallMat);
-      } else if(e.kind==="column"){
-        if(e.center && e.radius){
-          const m=new THREE.Mesh(new THREE.CylinderGeometry(e.radius,e.radius,floorHeight,24),columnMat);
-          m.position.set(e.center.x*unitScale,floorHeight/2,e.center.y*unitScale); group.add(m);
-        } else if(vs.length>=2){
-          for(let i=0;i<vs.length-1;i++) addSegment(vs[i],vs[i+1],floorHeight,wallThickness*1.8,columnMat);
+    for(const floor of floors){
+      const floorHeight=floor.height;
+      const baseY=floor.elevation;
+
+      const slabBox=floor.analysis.bounds;
+      if(slabBox){
+        const w=(slabBox.maxX-slabBox.minX)*unitScale;
+        const d=(slabBox.maxY-slabBox.minY)*unitScale;
+        if(w>0.01 && d>0.01){
+          const slab=new THREE.Mesh(
+            new THREE.BoxGeometry(w,0.18,d),
+            new THREE.MeshStandardMaterial({color:0xd8dbe0,roughness:.82})
+          );
+          slab.position.set(
+            ((slabBox.minX+slabBox.maxX)/2)*unitScale,
+            baseY+0.09,
+            ((slabBox.minY+slabBox.maxY)/2)*unitScale
+          );
+          slab.receiveShadow=true;
+          group.add(slab);
         }
-      } else if((e.kind==="door"||e.kind==="window") && vs.length>=2){
-        const mat=e.kind==="door"?doorMat:windowMat;
-        const h=e.kind==="door"?Math.min(2.2,floorHeight*.75):Math.min(1.5,floorHeight*.5);
-        const y=e.kind==="door"?0:Math.min(.9,floorHeight*.28);
-        for(let i=0;i<vs.length-1;i++) addSegment(vs[i],vs[i+1],h,wallThickness*.7,mat,y);
+      }
+
+      for(const e of floor.analysis.entities){
+        const vs=e.vertices||[];
+        if(e.kind==="wall" && vs.length>=2){
+          for(let i=0;i<vs.length-1;i++) addSegment(vs[i],vs[i+1],floorHeight,wallThickness,wallMat,baseY+0.18);
+        } else if(e.kind==="column"){
+          if(e.center && e.radius){
+            const m=new THREE.Mesh(new THREE.CylinderGeometry(e.radius*unitScale,e.radius*unitScale,floorHeight,24),columnMat);
+            m.position.set(e.center.x*unitScale,baseY+0.18+floorHeight/2,e.center.y*unitScale); group.add(m);
+          } else if(vs.length>=2){
+            for(let i=0;i<vs.length-1;i++) addSegment(vs[i],vs[i+1],floorHeight,wallThickness*1.8,columnMat,baseY+0.18);
+          }
+        } else if((e.kind==="door"||e.kind==="window") && vs.length>=2){
+          const mat=e.kind==="door"?doorMat:windowMat;
+          const h=e.kind==="door"?Math.min(2.2,floorHeight*.75):Math.min(1.5,floorHeight*.5);
+          const y=e.kind==="door"?0:Math.min(.9,floorHeight*.28);
+          for(let i=0;i<vs.length-1;i++) addSegment(vs[i],vs[i+1],h,wallThickness*.7,mat,baseY+0.18+y);
+        }
       }
     }
 
@@ -108,7 +137,7 @@ export default function CadSemantic3DPreview({
     loop();
 
     return ()=>{cancelAnimationFrame(raf);ro.disconnect();controls.dispose();renderer.dispose();host.innerHTML="";};
-  },[analysis,floorHeight,wallThickness,unitScale]);
+  },[floors,wallThickness,unitScale]);
 
   return <div ref={ref} style={{width:"100%",height:560,border:"1px solid #cbd5e1",borderRadius:12,overflow:"hidden"}}/>;
 }

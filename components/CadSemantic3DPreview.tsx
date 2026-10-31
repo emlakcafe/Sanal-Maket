@@ -96,7 +96,7 @@ export default function CadSemantic3DPreview({
     };
 
     for(const floor of floors){
-      const floorHeight=floor.height;
+      const floorHeight=floors.length===1 ? Math.min(floor.height,1.35) : floor.height;
       const baseY=floor.elevation;
 
       const recognizedCount =
@@ -152,11 +152,10 @@ export default function CadSemantic3DPreview({
           } else if(vs.length>=2){
             for(let i=0;i<vs.length-1;i++) addSegment(vs[i],vs[i+1],floorHeight,wallThickness*1.8,columnMat,baseY+0.18);
           }
-        } else if((e.kind==="door"||e.kind==="window") && vs.length>=2){
-          const mat=e.kind==="door"?doorMat:windowMat;
-          const h=e.kind==="door"?Math.min(2.2,floorHeight*.75):Math.min(1.5,floorHeight*.5);
-          const y=e.kind==="door"?0:Math.min(.9,floorHeight*.28);
-          for(let i=0;i<vs.length-1;i++) addSegment(vs[i],vs[i+1],h,wallThickness*.7,mat,baseY+0.18+y);
+        } else if((e.kind==="door"||e.kind==="window")){
+          // Raw CAD door/window primitives are intentionally not extruded.
+          // They will be added only after grouping into real architectural openings.
+          continue;
         }
       }
     }
@@ -168,7 +167,7 @@ export default function CadSemantic3DPreview({
       const center=box.getCenter(new THREE.Vector3());
       const radius=Math.max(size.x,size.z,size.y,10);
       controls.target.copy(center);
-      camera.position.copy(center.clone().add(new THREE.Vector3(radius*.9,radius*.75,radius*1.1)));
+      camera.position.copy(center.clone().add(new THREE.Vector3(radius*.65,radius*1.15,radius*.85)));
       camera.near=Math.max(.01,radius/5000);
       camera.far=radius*100;
       camera.updateProjectionMatrix();

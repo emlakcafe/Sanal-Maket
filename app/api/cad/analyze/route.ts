@@ -29,7 +29,17 @@ export async function POST(request: Request) {
     const dxfPath = join(work, "input.dxf");
     const selectionPath = join(work, "selection.json");
     const scriptPath = join(process.cwd(), "scripts", "cad", "analyze_ezdxf.py");
-    const python = process.env.EZDXF_PYTHON?.trim() || "python";
+    const configuredPython = process.env.EZDXF_PYTHON?.trim();
+    const localPython = join(process.cwd(), ".venv-cad", "Scripts", "python.exe");
+    let python = configuredPython || localPython;
+
+    if (!configuredPython) {
+      try {
+        await import("fs/promises").then(fs => fs.access(localPython));
+      } catch {
+        python = "python";
+      }
+    }
 
     await writeFile(dxfPath, dxfText, "utf8");
     await writeFile(selectionPath, JSON.stringify(selection), "utf8");

@@ -203,56 +203,13 @@ export default function ArchitecturalFileImporter(){
   const sessionHydratedRef=useRef(false);
 
   useEffect(()=>{
-    let cancelled=false;
-    (async()=>{
-      try{
-        const saved=await loadCadSession();
-        if(cancelled||!saved) return;
-
-        if(Array.isArray(saved.builtFloors)) setBuiltFloors(saved.builtFloors);
-        if(saved.buildStep) setBuildStep(saved.buildStep);
-        if(Number.isFinite(saved.nextFloorIndex)) setNextFloorIndex(saved.nextFloorIndex);
-        if(typeof saved.projectAssembled==="boolean") setProjectAssembled(saved.projectAssembled);
-        if(saved.unitMode) setUnitMode(saved.unitMode);
-        if(Number.isFinite(saved.floorHeight)) setFloorHeight(saved.floorHeight);
-        if(Number.isFinite(saved.wallThickness)) setWallThickness(saved.wallThickness);
-        if(typeof saved.dxfText==="string" && saved.dxfText){
-          setDxfText(saved.dxfText);
-          try{ setDxf(await parseDxf(saved.dxfText)); }catch{}
-        }
-        setMessage(saved.message || "Kaydedilmiş proje oturumu geri yüklendi.");
-        try{
-          const manual=await loadCadSession("manual-snapshot-v1");
-          if(manual?.savedAt) setManualSnapshotAt(new Date(manual.savedAt).toLocaleString("tr-TR"));
-        }catch{}
-        try{ localStorage.removeItem("emlak-cafe-cad-project-session-v1"); }catch{}
-      }catch{
-        // IndexedDB unavailable: keep app usable without persistence.
-      }finally{
-        sessionHydratedRef.current=true;
-      }
-    })();
-    return ()=>{cancelled=true;};
+    sessionHydratedRef.current=true;
+    try{
+      localStorage.removeItem("emlak-cafe-cad-project-session-v1");
+    }catch{}
   },[]);
 
-  useEffect(()=>{
-    if(!sessionHydratedRef.current) return;
-    const timer=setTimeout(()=>{
-      void saveCadSession({
-        builtFloors,
-        buildStep,
-        nextFloorIndex,
-        projectAssembled,
-        unitMode,
-        floorHeight,
-        wallThickness,
-        dxfText,
-        message,
-        savedAt:new Date().toISOString()
-      }).catch(()=>undefined);
-    },250);
-    return ()=>clearTimeout(timer);
-  },[builtFloors,buildStep,nextFloorIndex,projectAssembled,unitMode,floorHeight,wallThickness,dxfText,message]);
+
 
   const fmt=useMemo(()=>file?getCadFormat(file.name):null,[file]);
   const displayedAnalysis=analysis ?? (builtFloors.length ? builtFloors[builtFloors.length-1].analysis : null);
@@ -603,7 +560,6 @@ export default function ArchitecturalFileImporter(){
         {message&&<div style={{marginTop:12,padding:10,borderRadius:9,background:"#edf5ff",fontSize:12,lineHeight:1.45}}>{busy?"İşleniyor…":message}</div>}
         {dxfText&&<div style={{marginTop:14,padding:12,border:"1px solid #b8cce6",borderRadius:10,background:"#f8fbff"}}>
           <b style={{display:"block",fontSize:13,marginBottom:9}}>3D Model Ayarları</b>
-          <div style={{fontSize:10,color:"#54708f",marginBottom:8}}>Proje oturumu IndexedDB'ye otomatik kaydedilir; büyük GLB katları, çatı ve CAD verisi sayfa yenilense bile geri yüklenir.</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
             <button type="button" onClick={saveManualSnapshot} style={{
               padding:"9px 8px",border:0,borderRadius:8,background:"#176be0",color:"#fff",fontWeight:800,cursor:"pointer",fontSize:11
@@ -687,16 +643,10 @@ export default function ArchitecturalFileImporter(){
           <div style={{fontSize:10,color:"#7187a3",marginTop:8,lineHeight:1.4}}>Her kat ayrı ayrı tamamlanır; sonraki kat ancak kullanıcı seçtikten sonra eklenir.</div>
         </div>}
 
-        <h3 style={{fontSize:14,marginTop:20}}>Desteklenen formatlar</h3>
-        <div style={{display:"grid",gap:7}}>
-          {CAD_FORMATS.map(f=><div key={f.ext} style={{padding:"8px 9px",border:"1px solid #d7e2ef",borderRadius:8,fontSize:11}}>
-            <b>{f.ext.toUpperCase()}</b> · {f.label}<br/><span style={{color:"#7187a3"}}>{f.description}</span>
-          </div>)}
-        </div>
       </aside>
 
       <section style={{background:"#fff",border:"1px solid #bfd1ea",borderRadius:14,padding:14,minWidth:0}}>
-        {!file&&<div style={{minHeight:560,display:"grid",placeItems:"center",color:"#7a8da7"}}>DWG, DXF, IFC veya 3B proje dosyanızı seçin.</div>}
+        {!file&&<div style={{minHeight:560,display:"grid",placeItems:"center",color:"#7a8da7"}}>Kat planını içeren DWG veya DXF proje dosyanızı seçerek başlayın.</div>}
         {dxfText&&<ProfessionalDxfViewer text={dxfText} onSelection={region=>{
           if(buildStep==="roof-select"){
             setSelection(region);

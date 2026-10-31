@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import * as THREE from "three";
 
 type LayerState = { name:string; visible:boolean };
 
@@ -10,6 +11,9 @@ export default function ProfessionalDxfViewer({ text }:{ text:string }) {
   const urlRef=useRef<string|null>(null);
   const [layers,setLayers]=useState<LayerState[]>([]);
   const [status,setStatus]=useState("CAD görüntüleyici hazırlanıyor...");
+  const [progress,setProgress]=useState(0);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState("");
   const [viewWidth,setViewWidth]=useState<number|null>(null);
 
   useEffect(()=>{
@@ -26,7 +30,7 @@ export default function ProfessionalDxfViewer({ text }:{ text:string }) {
         const Viewer=mod.DxfViewer;
         const viewer=new Viewer(hostRef.current,{
           autoResize:true,
-          clearColor:0xf8fafc,
+          clearColor:new THREE.Color(0xf8fafc),
           clearAlpha:1,
           antialias:true,
           retainParsedDxf:true,
@@ -38,16 +42,22 @@ export default function ProfessionalDxfViewer({ text }:{ text:string }) {
         const url=URL.createObjectURL(blob);
         urlRef.current=url;
 
-        setStatus("DXF çizimi hazırlanıyor...");
+        setLoading(true);
+        setError("");
+        setProgress(2);
+        setStatus("Projeniz hazırlanıyor...");
         await viewer.Load({
           url,
           fonts:[],
           progressCbk:(phase:string,processed:number,total:number)=>{
-            if(total>0){
-              setStatus(`${phase}: %${Math.min(100,Math.round(processed/total*100))}`);
-            }else{
-              setStatus(phase);
-            }
+            const phaseBase:Record<string,number>={fetch:8,parse:24,prepare:62,font:88};
+            const base=phaseBase[phase] ?? 5;
+            const span=phase==="fetch"?16:phase==="parse"?38:phase==="prepare"?28:8;
+            const ratio=total>0?Math.max(0,Math.min(1,processed/total)):0.15;
+            const pct=Math.max(2,Math.min(96,Math.round(base+span*ratio)));
+            setProgress(pct);
+            const label=phase==="fetch"?"Dosya okunuyor":phase==="parse"?"Mimari çizim çözümleniyor":phase==="prepare"?"CAD geometrisi hazırlanıyor":phase==="font"?"Yazılar hazırlanıyor":"Proje hazırlanıyor";
+            setStatus(`${label} · %${pct}`);
           }
         });
 
@@ -65,9 +75,14 @@ export default function ProfessionalDxfViewer({ text }:{ text:string }) {
           setViewWidth(w*1.1);
           viewer.FitView(b.minX,b.maxX,b.minY,b.maxY,0.06);
         }
+        setProgress(100);
         setStatus("Hazır · tekerlek ile yakınlaştır, sürükleyerek gez.");
+        setLoading(false);
       }catch(e){
-        setStatus(e instanceof Error?e.message:String(e));
+        const msg=e instanceof Error?e.message:String(e);
+        setError(msg);
+        setStatus(msg);
+        setLoading(false);
       }
     })();
 
@@ -107,7 +122,26 @@ export default function ProfessionalDxfViewer({ text }:{ text:string }) {
     setLayers(ls=>ls.map(l=>l.name===name?{...l,visible}:l));
   }
 
-  return <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) 230px",gap:12,minHeight:620}}>
+  return <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) 230px",gap:12,minHeight:620,position:"relative"}}>
+    {loading&&<div style={{
+      position:"absolute",inset:0,zIndex:20,display:"grid",placeItems:"center",
+      background:"rgba(6,19,31,.94)",backdropFilter:"blur(4px)",borderRadius:14
+    }}>
+      <div style={{width:"min(520px,82%)",textAlign:"center",color:"#fff"}}>
+        <div style={{fontSize:11,letterSpacing:".22em",color:"#7fb8ff",marginBottom:8}}>EMLAK CAFE AI</div>
+        <div style={{fontSize:30,fontWeight:800,marginBottom:8}}>Projeniz yükleniyor</div>
+        <div style={{fontSize:13,color:"#b9cce0",marginBottom:18}}>{status}</div>
+        <div style={{height:12,borderRadius:99,background:"#17304a",overflow:"hidden",border:"1px solid #315b84"}}>
+          <div style={{height:"100%",width:`${progress}%`,background:"linear-gradient(90deg,#1d6eea,#62b5ff)",transition:"width .2s ease"}}/>
+        </div>
+        <div style={{marginTop:8,fontSize:20,fontWeight:800}}>%{progress}</div>
+        <div style={{marginTop:16,fontSize:11,color:"#7f99b4"}}>DWG/DXF çizimi analiz ediliyor. Büyük projelerde bu işlem dosya boyutuna göre uzayabilir.</div>
+      </div>
+    </div>}
+    {error&&<div style={{
+      position:"absolute",left:18,right:250,top:70,zIndex:21,padding:12,borderRadius:9,
+      background:"#fff1f1",border:"1px solid #e79a9a",color:"#9b1c1c",fontSize:12
+    }}>CAD görüntüleyici hatası: {error}</div>}
     <section style={{minWidth:0,border:"1px solid #cbd5e1",borderRadius:12,overflow:"hidden",background:"#f8fafc"}}>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",padding:10,borderBottom:"1px solid #dbe4ee",background:"#fff"}}>
         <button type="button" onClick={()=>zoom(0.8)} style={btn}>Yakınlaştır +</button>

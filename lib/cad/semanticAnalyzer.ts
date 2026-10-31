@@ -23,6 +23,10 @@ export type SemanticEntity = {
 };
 
 export type CadSelectionBounds = { minX:number; minY:number; maxX:number; maxY:number };
+export type CadSelectionRegion = {
+  polygon: Array<{x:number;y:number}>;
+  bounds: CadSelectionBounds;
+};
 
 export type CadSemanticAnalysis = {
   layers: SemanticLayer[];
@@ -68,15 +72,30 @@ export function classifyLayer(name:string): {kind:SemanticKind;confidence:number
   return best;
 }
 
-function entityInsideBounds(e:SemanticEntity,b?:CadSelectionBounds|null){
-  if(!b) return true;
+function pointInPolygon(p:{x:number;y:number}, poly:Array<{x:number;y:number}>){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const a=poly[i], b=poly[j];
+    const hit=((a.y>p.y)!==(b.y>p.y)) &&
+      (p.x < (b.x-a.x)*(p.y-a.y)/((b.y-a.y)||1e-9)+a.x);
+    if(hit) inside=!inside;
+  }
+  return inside;
+}
+
+function entityInsideRegion(e:SemanticEntity,region?:CadSelectionRegion|null){
+  if(!region) return true;
   const pts=[...(e.vertices||[])];
   if(e.center) pts.push(e.center);
   if(!pts.length) return false;
-  return pts.some(p=>p.x>=b.minX&&p.x<=b.maxX&&p.y>=b.minY&&p.y<=b.maxY);
+  return pts.some(p =>
+    p.x>=region.bounds.minX && p.x<=region.bounds.maxX &&
+    p.y>=region.bounds.minY && p.y<=region.bounds.maxY &&
+    pointInPolygon(p,region.polygon)
+  );
 }
 
-export function analyzeDxfText(text:string, selection?:CadSelectionBounds|null): CadSemanticAnalysis {
+export function analyzeDxfText(text:string, selection?:CadSelectionRegion|null): CadSemanticAnalysis {
   const parser=new DxfParser();
   const doc:any=parser.parseSync(text);
   const layerCounts=new Map<string,number>();
@@ -123,7 +142,7 @@ export function analyzeDxfText(text:string, selection?:CadSelectionBounds|null):
       texts.push({layer,text:rawText});
     }
 
-    if(entityInsideBounds(se,selection)){
+    if(entityInsideRegion(se,selection)){
       counts[kind]++;
       entities.push(se);
     }

@@ -100,10 +100,28 @@ export default function ProfessionalDxfViewer({
         handlePick=(ev:any)=>{
           if(!selectionEnabledRef.current) return;
 
+          const canvas=viewer.GetCanvas?.();
+          const domEvent=ev?.domEvent as PointerEvent | undefined;
+          if(!canvas || !domEvent) {
+            setSelectionText("Koordinat alınamadı. Tekrar deneyin.");
+            return;
+          }
+
+          const rect=canvas.getBoundingClientRect();
+          const localX=domEvent.clientX-rect.left;
+          const localY=domEvent.clientY-rect.top;
+
+          const sceneRaw=viewer.CanvasToSceneCoord(localX,localY);
           const scenePoint={
-            x:Number(ev.position?.x||0),
-            y:Number(ev.position?.y||0)
+            x:Number(sceneRaw?.x),
+            y:Number(sceneRaw?.y)
           };
+
+          if(!Number.isFinite(scenePoint.x) || !Number.isFinite(scenePoint.y)) {
+            setSelectionText("Geçerli CAD koordinatı alınamadı. Tekrar deneyin.");
+            return;
+          }
+
           const origin=viewer.GetOrigin?.() || {x:0,y:0};
           const drawingPoint={
             x:scenePoint.x+Number(origin.x||0),
@@ -127,9 +145,19 @@ export default function ProfessionalDxfViewer({
             minY:Math.min(...ys),maxY:Math.max(...ys)
           };
 
+          const width=bounds.maxX-bounds.minX;
+          const height=bounds.maxY-bounds.minY;
+          if(width<=1e-6 || height<=1e-6){
+            scenePointsRef.current=[];
+            drawingPointsRef.current=[];
+            setScreenPoints([]);
+            setSelectionText("Seçim alanı geçersiz. 4 farklı köşeyi yeniden seçin.");
+            return;
+          }
+
           selectionEnabledRef.current=false;
           setSelectMode(false);
-          setSelectionText("4 köşe seçildi · plan tarama alanı hazır.");
+          setSelectionText(`4 köşe seçildi · alan: ${width.toFixed(2)} × ${height.toFixed(2)} CAD birimi`);
           onSelectionRef.current?.({polygon,bounds});
         };
 

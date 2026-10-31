@@ -140,6 +140,22 @@ def main():
         print(json.dumps({"error":"DXF_READ_FAILED","detail":str(exc)}, ensure_ascii=False))
         return 4
 
+    def raw_layout_bounds(layout):
+        minx = miny = float("inf")
+        maxx = maxy = float("-inf")
+        count = 0
+        for source in layout:
+            for e in iter_virtual(source):
+                pts = entity_points(e)
+                for p in pts:
+                    x, y = float(p.x), float(p.y)
+                    minx=min(minx,x); maxx=max(maxx,x)
+                    miny=min(miny,y); maxy=max(maxy,y)
+                    count += 1
+        if not math.isfinite(minx):
+            return None
+        return {"minX":minx,"minY":miny,"maxX":maxx,"maxY":maxy,"pointCount":count}
+
     def scan_layout(layout):
         entities = []
         texts = []
@@ -202,6 +218,7 @@ def main():
         recognized = counts["wall"] + counts["column"] + counts["door"] + counts["window"] + counts["stair"]
         return {
             "name": layout.name,
+            "rawBounds": raw_layout_bounds(layout),
             "entities": entities,
             "texts": texts,
             "layer_counts": layer_counts,
@@ -251,8 +268,17 @@ def main():
         "engine":"ezdxf",
         "dxfVersion":doc.dxfversion,
         "layout":best["name"],
+        "selectionDiagnostics":{
+            "polygon":region.get("polygon"),
+            "bounds":region.get("bounds")
+        },
         "layoutDiagnostics":[
-            {"name":s["name"],"recognized":s["recognized"],"total":s["total"]}
+            {
+                "name":s["name"],
+                "recognized":s["recognized"],
+                "total":s["total"],
+                "rawBounds":s.get("rawBounds")
+            }
             for s in scans
         ],
         "layers":layers,

@@ -4,20 +4,22 @@ $download = "https://github.com/LibreDWG/libredwg/releases/download/0.14/libredw
 $expectedSha256 = "1ad7e15344d20b3426c3435b078d82fb84b35062815946b2cca9c5fc9810fea8"
 
 $target = Join-Path $env:LOCALAPPDATA "libredwg"
-$zip = Join-Path $env:TEMP "libredwg-0.14-win64.zip"
+$cacheRoot = Join-Path (Get-Location) ".cache\libredwg"
+New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+$zip = Join-Path $cacheRoot "libredwg-0.14-win64.zip"
 
 Write-Host "LibreDWG 0.14 indiriliyor..."
 Invoke-WebRequest -Uri $download -OutFile $zip -UseBasicParsing
 
 $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
 if ($actual -ne $expectedSha256) {
-  Remove-Item $zip -Force -ErrorAction SilentlyContinue
+  if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
   throw "SHA256 dogrulamasi basarisiz. Indirme iptal edildi."
 }
 
 New-Item -ItemType Directory -Force -Path $target | Out-Null
-Expand-Archive -Path $zip -DestinationPath $target -Force
-Remove-Item $zip -Force -ErrorAction SilentlyContinue
+Expand-Archive -LiteralPath $zip -DestinationPath $target -Force
+if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 
 $exe = Join-Path $target "dwg2dxf.exe"
 if (-not (Test-Path $exe)) {

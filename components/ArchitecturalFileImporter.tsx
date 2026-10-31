@@ -3,12 +3,14 @@
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { ACCEPTED_ARCHITECTURAL_EXTENSIONS, CAD_FORMATS, getCadFormat } from "@/lib/cad/formats";
+import { analyzeDxfText, type CadSemanticAnalysis } from "@/lib/cad/semanticAnalyzer";
 
 const ThreeFilePreview = dynamic(
   () => import("@/components/Architectural3DPreview").then(m => m.ThreeFilePreview),
   { ssr: false }
 );
 const ProfessionalDxfViewer = dynamic(() => import("@/components/ProfessionalDxfViewer"), { ssr: false });
+const CadSemantic3DPreview = dynamic(() => import("@/components/CadSemantic3DPreview"), { ssr: false });
 
 type Pt = { x:number; y:number };
 type DxfShape =
@@ -121,12 +123,17 @@ export default function ArchitecturalFileImporter(){
   const [message,setMessage]=useState("");
   const [busy,setBusy]=useState(false);
   const [objectUrl,setObjectUrl]=useState<string|null>(null);
+  const [analysis,setAnalysis]=useState<CadSemanticAnalysis|null>(null);
+  const [analysisBusy,setAnalysisBusy]=useState(false);
+  const [analysisProgress,setAnalysisProgress]=useState(0);
+  const [floorHeight,setFloorHeight]=useState(3.0);
+  const [wallThickness,setWallThickness]=useState(0.20);
 
   const fmt=useMemo(()=>file?getCadFormat(file.name):null,[file]);
 
   async function loadFile(next:File|null){
     if(objectUrl) URL.revokeObjectURL(objectUrl);
-    setObjectUrl(null); setDxf(null); setDxfText(""); setMessage(""); setFile(next);
+    setObjectUrl(null); setDxf(null); setDxfText(""); setAnalysis(null); setMessage(""); setFile(next);
     if(!next)return;
     const info=getCadFormat(next.name);
     if(!info){setMessage("Bu dosya uzantisi henuz desteklenmiyor.");return;}
@@ -166,6 +173,27 @@ export default function ArchitecturalFileImporter(){
     }
   }
 
+  async function createInteractiveModel(){
+    if(!dxfText) return;
+    setAnalysisBusy(true);
+    setAnalysisProgress(8);
+    try{
+      await new Promise(r=>setTimeout(r,80));
+      setAnalysisProgress(28);
+      const result=analyzeDxfText(dxfText);
+      await new Promise(r=>setTimeout(r,80));
+      setAnalysisProgress(72);
+      setAnalysis(result);
+      await new Promise(r=>setTimeout(r,80));
+      setAnalysisProgress(100);
+      setMessage("Mimari proje analiz edildi. Tanınan elemanlardan sadık 3D teknik model oluşturuldu.");
+    }catch(e){
+      setMessage(e instanceof Error?e.message:String(e));
+    }finally{
+      setAnalysisBusy(false);
+    }
+  }
+
   return <main style={{minHeight:"100vh",background:"#eef5ff",padding:24,color:"#10396d",fontFamily:"Inter,Arial,sans-serif"}}>
     <header style={{display:"flex",justifyContent:"space-between",gap:16,alignItems:"flex-end",marginBottom:18}}>
       <div><div style={{fontSize:11,letterSpacing:".16em",color:"#607b9d"}}>EMLAK CAFE AI · CAD / BIM</div><h1 style={{margin:"6px 0",fontSize:34}}>Mimari Proje İçe Aktar</h1><p style={{margin:0,color:"#6b82a0"}}>Mimar ve mühendislerin kullandığı proje dosyalarını tek çalışma alanında açın.</p></div>
@@ -182,6 +210,19 @@ export default function ArchitecturalFileImporter(){
           <b>{file.name}</b><div>{(file.size/1024/1024).toFixed(2)} MB</div>{fmt&&<div>{fmt.label} · {fmt.category}</div>}
         </div>}
         {message&&<div style={{marginTop:12,padding:10,borderRadius:9,background:"#edf5ff",fontSize:12,lineHeight:1.45}}>{busy?"İşleniyor…":message}</div>}
+        {dxfText&&<div style={{marginTop:14,padding:12,border:"1px solid #b8cce6",borderRadius:10,background:"#f8fbff"}}>
+          <b style={{display:"block",fontSize:13,marginBottom:9}}>3D Model Ayarları</b>
+          <label style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>Kat yüksekliği (m)
+            <input type="number" step=".05" min="2" max="8" value={floorHeight} onChange={e=>setFloorHeight(Number(e.target.value)||3)} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}/>
+          </label>
+          <label style={{display:"grid",gap:5,fontSize:11,marginBottom:10}}>Duvar kalınlığı (m)
+            <input type="number" step=".01" min=".08" max="1" value={wallThickness} onChange={e=>setWallThickness(Number(e.target.value)||.2)} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}/>
+          </label>
+          <button type="button" onClick={createInteractiveModel} disabled={analysisBusy} style={{
+            width:"100%",padding:"12px 10px",border:0,borderRadius:9,background:"#176be0",color:"#fff",fontWeight:800,cursor:"pointer"
+          }}>{analysisBusy?`Emlak Cafe AI analiz ediyor · %${analysisProgress}`:"İnteraktif 360 Sanal Maketini Oluştur"}</button>
+          <div style={{fontSize:10,color:"#7187a3",marginTop:8,lineHeight:1.4}}>Çizimde olmayan mimari elemanlar otomatik olarak uydurulmaz.</div>
+        </div>}
 
         <h3 style={{fontSize:14,marginTop:20}}>Desteklenen formatlar</h3>
         <div style={{display:"grid",gap:7}}>
@@ -194,6 +235,21 @@ export default function ArchitecturalFileImporter(){
       <section style={{background:"#fff",border:"1px solid #bfd1ea",borderRadius:14,padding:14,minWidth:0}}>
         {!file&&<div style={{minHeight:560,display:"grid",placeItems:"center",color:"#7a8da7"}}>DWG, DXF, IFC veya 3B proje dosyanızı seçin.</div>}
         {dxfText&&<ProfessionalDxfViewer text={dxfText}/>}
+        {analysis&&<div style={{marginTop:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr))",gap:8,marginBottom:12}}>
+            {[
+              ["Duvar",analysis.counts.wall],["Kolon",analysis.counts.column],["Kapı",analysis.counts.door],["Pencere",analysis.counts.window],
+              ["Merdiven",analysis.counts.stair],["Aks",analysis.counts.axis],["Ölçü",analysis.counts.dimension],["Metin",analysis.counts.text]
+            ].map(([label,value])=><div key={String(label)} style={{padding:10,border:"1px solid #d6e2ef",borderRadius:9,background:"#f8fbff"}}>
+              <span style={{display:"block",fontSize:10,color:"#7187a3"}}>{label}</span><b style={{fontSize:18}}>{value}</b>
+            </div>)}
+          </div>
+          {analysis.warnings.length>0&&<div style={{padding:10,border:"1px solid #e9c77d",background:"#fff8e9",borderRadius:9,fontSize:11,lineHeight:1.5,marginBottom:12}}>
+            {analysis.warnings.map(w=><div key={w}>• {w}</div>)}
+          </div>}
+          <h2 style={{fontSize:20,margin:"10px 0"}}>Projeye Sadık 3D Teknik Önizleme</h2>
+          <CadSemantic3DPreview analysis={analysis} floorHeight={floorHeight} wallThickness={wallThickness}/>
+        </div>}
         {file && [".glb",".gltf",".obj",".stl"].includes(fmt?.ext||"") && <ThreeFilePreview file={file}/>}
         {objectUrl && fmt?.ext===".svg" && <img src={objectUrl} alt="SVG mimari plan önizlemesi" style={{maxWidth:"100%",maxHeight:720,display:"block",margin:"auto"}}/>}
         {objectUrl && fmt?.ext===".pdf" && <iframe title="PDF plan önizlemesi" src={objectUrl} style={{width:"100%",height:720,border:0,borderRadius:10}}/>}

@@ -31,6 +31,8 @@ export type CadSelectionRegion = {
 export type CadSemanticAnalysis = {
   engine?: string;
   dxfVersion?: string;
+  layout?: string;
+  layoutDiagnostics?: Array<{name:string;recognized:number;total:number}>;
   layers: SemanticLayer[];
   entities: SemanticEntity[];
   counts: Record<SemanticKind, number>;

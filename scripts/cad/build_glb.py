@@ -60,6 +60,20 @@ def main():
     glass_count=0
     wall_footprints=[]
 
+    all_xy=[]
+    for w in wall_segments:
+        for key in ("start","end"):
+            p=w.get(key) or {}
+            all_xy.append((float(p.get("x",0))*unit_scale,float(p.get("y",0))*unit_scale))
+    if all_xy:
+        minx=min(p[0] for p in all_xy); maxx=max(p[0] for p in all_xy)
+        miny=min(p[1] for p in all_xy); maxy=max(p[1] for p in all_xy)
+        origin_x=(minx+maxx)/2.0
+        origin_y=(miny+maxy)/2.0
+    else:
+        origin_x=0.0
+        origin_y=0.0
+
     def add_box(name,cx,cy,z0,length,thickness,height,angle,color):
         nonlocal wall_mesh_count
         if length<=0.02 or height<=0.02:
@@ -92,10 +106,10 @@ def main():
 
     for wi,w in enumerate(wall_segments):
         a=w.get("start") or {}; b=w.get("end") or {}
-        ax=float(a.get("x",0))*unit_scale
-        ay=float(a.get("y",0))*unit_scale
-        bx=float(b.get("x",0))*unit_scale
-        by=float(b.get("y",0))*unit_scale
+        ax=float(a.get("x",0))*unit_scale-origin_x
+        ay=float(a.get("y",0))*unit_scale-origin_y
+        bx=float(b.get("x",0))*unit_scale-origin_x
+        by=float(b.get("y",0))*unit_scale-origin_y
         thickness=max(0.08,min(0.45,float(w.get("thickness",0))*unit_scale))
         dx=bx-ax; dy=by-ay
         length=math.hypot(dx,dy)
@@ -197,12 +211,12 @@ def main():
             r=max(0.08,float(radius)*unit_scale)
             mesh=trimesh.creation.cylinder(radius=r,height=floor_height,sections=24)
             mesh.apply_translation([
-                float(center.get("x",0))*unit_scale,
-                float(center.get("y",0))*unit_scale,
+                float(center.get("x",0))*unit_scale-origin_x,
+                float(center.get("y",0))*unit_scale-origin_y,
                 floor_height/2
             ])
         elif len(verts)>=3:
-            pts=[(float(v.get("x",0))*unit_scale,float(v.get("y",0))*unit_scale) for v in verts]
+            pts=[(float(v.get("x",0))*unit_scale-origin_x,float(v.get("y",0))*unit_scale-origin_y) for v in verts]
             try:
                 p=Polygon(pts).buffer(0)
                 if p.area>0.01:
@@ -236,6 +250,7 @@ def main():
         "windows":window_count,
         "glassPanels":glass_count,
         "columns":col_index,
+        "origin":{"x":origin_x,"y":origin_y},
         "bounds":bounds
     }
     print(json.dumps(result))

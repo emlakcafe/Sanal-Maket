@@ -303,7 +303,7 @@ def reconstruct_openings(entities, walls, unit_scale):
         radius=float(e.get("radius") or 0.0)
         center=e.get("center")
         if t=="ARC" and center and 0.45 <= radius*unit_scale <= 1.60:
-            kind="door" if ("KAPI" in layer or e.get("kind") in ("door","window")) else None
+            kind="door" if ("KAPI" in layer or "DOOR" in layer) else None
             if kind:
                 candidates.append({
                     "kind":"door",
@@ -317,7 +317,8 @@ def reconstruct_openings(entities, walls, unit_scale):
     # Window signal: many line/polyline primitives close to each other on window-related layers.
     win_points=[]
     for idx,e in enumerate(entities):
-        if e.get("kind")!="window":
+        layer=norm(e.get("layer",""))
+        if not ("PENCERE" in layer or "WINDOW" in layer or "KA-PEN" in layer or "KAP-PEN" in layer):
             continue
         if e.get("type") not in ("LINE","LWPOLYLINE","POLYLINE"):
             continue
@@ -330,9 +331,9 @@ def reconstruct_openings(entities, walls, unit_scale):
 
     if win_points:
         coords=[(p[0],p[1]) for p in win_points]
-        groups=cluster_points(coords, max(0.65/unit_scale,1.0))
+        groups=cluster_points(coords, max(0.35/unit_scale,1.0))
         for g in groups:
-            if len(g)<2:
+            if len(g)<3:
                 continue
             pts=[]
             for gi in g:
@@ -342,7 +343,7 @@ def reconstruct_openings(entities, walls, unit_scale):
                 continue
             xs=[p[0] for p in pts]; ys=[p[1] for p in pts]
             width_m=max(max(xs)-min(xs),max(ys)-min(ys))*unit_scale
-            if width_m<0.35 or width_m>5.0:
+            if width_m<0.45 or width_m>3.50:
                 continue
             candidates.append({
                 "kind":"window",
@@ -362,7 +363,7 @@ def reconstruct_openings(entities, walls, unit_scale):
             bx=float(w["end"]["x"]); by=float(w["end"]["y"])
             dist,t=point_seg_distance(op["x"],op["y"],ax,ay,bx,by)
             dist_m=dist*unit_scale
-            if dist_m>0.85:
+            if dist_m>0.35:
                 continue
             score=dist_m
             if best is None or score<best[0]:

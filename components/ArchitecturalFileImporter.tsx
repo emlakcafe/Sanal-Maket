@@ -8,6 +8,7 @@ const ThreeFilePreview = dynamic(
   () => import("@/components/Architectural3DPreview").then(m => m.ThreeFilePreview),
   { ssr: false }
 );
+const ProfessionalDxfViewer = dynamic(() => import("@/components/ProfessionalDxfViewer"), { ssr: false });
 
 type Pt = { x:number; y:number };
 type DxfShape =
@@ -116,6 +117,7 @@ function DxfPreview({ shapes, layers }:{shapes:DxfShape[];layers:string[]}) {
 export default function ArchitecturalFileImporter(){
   const [file,setFile]=useState<File|null>(null);
   const [dxf,setDxf]=useState<{shapes:DxfShape[];layers:string[]}|null>(null);
+  const [dxfText,setDxfText]=useState<string>("");
   const [message,setMessage]=useState("");
   const [busy,setBusy]=useState(false);
   const [objectUrl,setObjectUrl]=useState<string|null>(null);
@@ -124,7 +126,7 @@ export default function ArchitecturalFileImporter(){
 
   async function loadFile(next:File|null){
     if(objectUrl) URL.revokeObjectURL(objectUrl);
-    setObjectUrl(null); setDxf(null); setMessage(""); setFile(next);
+    setObjectUrl(null); setDxf(null); setDxfText(""); setMessage(""); setFile(next);
     if(!next)return;
     const info=getCadFormat(next.name);
     if(!info){setMessage("Bu dosya uzantisi henuz desteklenmiyor.");return;}
@@ -132,8 +134,10 @@ export default function ArchitecturalFileImporter(){
     setBusy(true);
     try{
       if(info.ext===".dxf"){
-        setDxf(await parseDxf(await next.text()));
-        setMessage("DXF basariyla okundu.");
+        const text=await next.text();
+        setDxfText(text);
+        setDxf(await parseDxf(text));
+        setMessage("DXF profesyonel WebGL goruntuleyicide acildi.");
       } else if(info.ext===".dwg"){
         const body=new FormData(); body.append("file",next);
         const res=await fetch("/api/cad/dwg-to-dxf",{method:"POST",body});
@@ -141,8 +145,10 @@ export default function ArchitecturalFileImporter(){
           const err=await res.json().catch(()=>({error:"DWG donusumu basarisiz."}));
           throw new Error(err.error || "DWG donusumu basarisiz.");
         }
-        setDxf(await parseDxf(await res.text()));
-        setMessage("DWG LibreDWG ile DXF'e cevrildi ve acildi.");
+        const text=await res.text();
+        setDxfText(text);
+        setDxf(await parseDxf(text));
+        setMessage("DWG LibreDWG ile DXF'e cevrildi ve profesyonel CAD goruntuleyicide acildi.");
       } else if([".svg",".pdf"].includes(info.ext)){
         setObjectUrl(URL.createObjectURL(next));
         setMessage(info.ext.toUpperCase()+" onizleme hazir.");
@@ -187,7 +193,7 @@ export default function ArchitecturalFileImporter(){
 
       <section style={{background:"#fff",border:"1px solid #bfd1ea",borderRadius:14,padding:14,minWidth:0}}>
         {!file&&<div style={{minHeight:560,display:"grid",placeItems:"center",color:"#7a8da7"}}>DWG, DXF, IFC veya 3B proje dosyanızı seçin.</div>}
-        {dxf&&<DxfPreview shapes={dxf.shapes} layers={dxf.layers}/>}
+        {dxfText&&<ProfessionalDxfViewer text={dxfText}/>}
         {file && [".glb",".gltf",".obj",".stl"].includes(fmt?.ext||"") && <ThreeFilePreview file={file}/>}
         {objectUrl && fmt?.ext===".svg" && <img src={objectUrl} alt="SVG mimari plan önizlemesi" style={{maxWidth:"100%",maxHeight:720,display:"block",margin:"auto"}}/>}
         {objectUrl && fmt?.ext===".pdf" && <iframe title="PDF plan önizlemesi" src={objectUrl} style={{width:"100%",height:720,border:0,borderRadius:10}}/>}

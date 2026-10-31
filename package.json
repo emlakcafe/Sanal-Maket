@@ -21,7 +21,8 @@
     "maplibre-gl": "^5.8.0",
     "@turf/boolean-within": "^7.2.0",
     "dxf-parser": "^1.1.2",
-    "web-ifc": "^0.0.78"
+    "web-ifc": "^0.0.78",
+    "dxf-viewer": "^1.0.50"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

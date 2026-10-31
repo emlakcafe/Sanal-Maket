@@ -22,6 +22,8 @@ export type SemanticEntity = {
   text?: string;
 };
 
+export type CadSelectionBounds = { minX:number; minY:number; maxX:number; maxY:number };
+
 export type CadSemanticAnalysis = {
   layers: SemanticLayer[];
   entities: SemanticEntity[];
@@ -34,8 +36,8 @@ export type CadSemanticAnalysis = {
 const RULES:Array<{kind:SemanticKind;tokens:string[]}> = [
   { kind:"wall", tokens:["DUVAR","WALL","A-WALL","MIM-DUVAR","MIM_DUVAR","MIMARI DUVAR"] },
   { kind:"column", tokens:["KOLON","COLUMN","COL","BETONARME KOLON"] },
-  { kind:"door", tokens:["KAPI","DOOR","KA-","KAPI-PEN","KAPI_PEN"] },
-  { kind:"window", tokens:["PENCERE","WINDOW","PEN","KA-PEN","KAPI-PEN","KAPI_PEN"] },
+  { kind:"door", tokens:["KAPI","DOOR","KAPI-PEN","KAPI_PEN"] },
+  { kind:"window", tokens:["PENCERE","WINDOW","KA-PEN","KAPI-PEN","KAPI_PEN"] },
   { kind:"stair", tokens:["MERDIVEN","STAIR","STAIRS"] },
   { kind:"axis", tokens:["AKS","AXIS","GRID"] },
   { kind:"dimension", tokens:["OLCU","ÖLÇÜ","DIM","DIMENSION"] },
@@ -56,8 +58,9 @@ export function classifyLayer(name:string): {kind:SemanticKind;confidence:number
     for(const token of r.tokens){
       const t=normalize(token);
       if(n===t) return {kind:r.kind,confidence:1};
-      if(n.includes(t)){
-        const confidence=Math.min(.96,.62+t.length/Math.max(n.length,1)*.35);
+      const tokenLike = n.startsWith(t + "-") || n.startsWith(t + "_") || n.endsWith("-" + t) || n.endsWith("_" + t) || n.includes("-" + t + "-") || n.includes("_" + t + "_");
+      if(tokenLike){
+        const confidence=Math.min(.94,.68+t.length/Math.max(n.length,1)*.25);
         if(confidence>best.confidence) best={kind:r.kind,confidence};
       }
     }
@@ -65,7 +68,15 @@ export function classifyLayer(name:string): {kind:SemanticKind;confidence:number
   return best;
 }
 
-export function analyzeDxfText(text:string): CadSemanticAnalysis {
+function entityInsideBounds(e:SemanticEntity,b?:CadSelectionBounds|null){
+  if(!b) return true;
+  const pts=[...(e.vertices||[])];
+  if(e.center) pts.push(e.center);
+  if(!pts.length) return false;
+  return pts.some(p=>p.x>=b.minX&&p.x<=b.maxX&&p.y>=b.minY&&p.y<=b.maxY);
+}
+
+export function analyzeDxfText(text:string, selection?:CadSelectionBounds|null): CadSemanticAnalysis {
   const parser=new DxfParser();
   const doc:any=parser.parseSync(text);
   const layerCounts=new Map<string,number>();
@@ -112,8 +123,10 @@ export function analyzeDxfText(text:string): CadSemanticAnalysis {
       texts.push({layer,text:rawText});
     }
 
-    counts[kind]++;
-    entities.push(se);
+    if(entityInsideBounds(se,selection)){
+      counts[kind]++;
+      entities.push(se);
+    }
   }
 
   const layers=[...layerCounts.entries()].map(([name,entityCount])=>{

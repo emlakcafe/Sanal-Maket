@@ -200,7 +200,7 @@ export default function ArchitecturalFileImporter(){
   const [nextFloorIndex,setNextFloorIndex]=useState(1);
   const [projectAssembled,setProjectAssembled]=useState(false);
   const [manualSnapshotAt,setManualSnapshotAt]=useState<string>("");
-  const [ifcBim,setIfcBim]=useState<{base64:string;previewGlbBase64:string;walls:number;bytes:number;schema?:string;previewMeshes?:number;previewFaces?:number}|null>(null);
+  const [ifcBim,setIfcBim]=useState<{base64:string;previewGlbBase64:string;walls:number;bytes:number;schema?:string;previewMeshes?:number;previewFaces?:number;doors?:number;windows?:number;glassPanels?:number;roomCount?:number;rooms?:Array<{id:number;area:number;x:number;y:number}>}|null>(null);
   const previewAnchorRef=useRef<HTMLDivElement|null>(null);
   useEffect(()=>{
     try{
@@ -381,7 +381,7 @@ export default function ArchitecturalFileImporter(){
       setAnalysisProgress(82);
       setGenerationStage("IfcOpenShell: IfcWall elemanları oluşturuluyor");
 
-      const ifcRes=await fetch("/api/cad/build-ifc",{
+      const ifcRes=await fetch("/api/cad/build-ifc-v2",{
         method:"POST",
         headers:{"content-type":"application/json"},
         body:JSON.stringify({analysis:result,floorHeight})
@@ -468,12 +468,17 @@ export default function ArchitecturalFileImporter(){
         bytes:Number(out.bytes||0),
         schema:out.schema,
         previewMeshes:Number(out.previewMeshes||0),
-        previewFaces:Number(out.previewFaces||0)
+        previewFaces:Number(out.previewFaces||0),
+        doors:Number(out.doors||0),
+        windows:Number(out.windows||0),
+        glassPanels:Number(out.glassPanels||0),
+        roomCount:Number(out.roomCount||0),
+        rooms:Array.isArray(out.rooms)?out.rooms:[]
       });
       setAnalysisProgress(100);
       setGenerationStage("Architecture Engine v2 zemin kat hazır");
       const v2=(result as any)?.reconstruction?.v2;
-      setMessage(`Architecture Engine v2 hazır: ${out.walls||0} IfcWall · çift çizgi ${v2?.pairedWallCount||0} · kurtarılan tek çizgi ${v2?.fallbackWallCount||0}. Önizlemeyi DWG ile karşılaştırın.`);
+      setMessage(`Architecture Engine v2 hazır: ${out.walls||0} duvar · ${out.doors||0} kapı · ${out.windows||0} pencere · ${out.roomCount||0} oda. Çift çizgi ${v2?.pairedWallCount||0} · kurtarılan tek çizgi ${v2?.fallbackWallCount||0}.`);
       setTimeout(()=>previewAnchorRef.current?.scrollIntoView({behavior:"smooth",block:"start"}),60);
     }catch(e){
       if(timer){clearInterval(timer);timer=null;}
@@ -847,8 +852,13 @@ export default function ArchitecturalFileImporter(){
             </div>
           </div>
           <div style={{marginBottom:8,fontSize:11,color:"#3b5f7f"}}>
-            Sunucu IFC önizleme mesh'i: {ifcBim.previewMeshes||0} · Üçgen: {ifcBim.previewFaces||0}
+            Duvar: {ifcBim.walls||0} · Kapı: {ifcBim.doors||0} · Pencere: {ifcBim.windows||0} · Cam: {ifcBim.glassPanels||0} · Oda: {ifcBim.roomCount||0}
           </div>
+          {Boolean(ifcBim.rooms?.length)&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+            {ifcBim.rooms!.slice(0,30).map(r=><div key={r.id} style={{padding:"6px 8px",border:"1px solid #c9d8e8",borderRadius:7,background:"#f8fbff",fontSize:10,color:"#365d82"}}>
+              Oda {r.id}: <b>{r.area.toFixed(2)} m²</b>
+            </div>)}
+          </div>}
           <CadGlbPreview base64={ifcBim.previewGlbBase64}/>
         </div>}
 

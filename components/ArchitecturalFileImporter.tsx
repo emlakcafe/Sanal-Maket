@@ -12,6 +12,7 @@ const ThreeFilePreview = dynamic(
 const ProfessionalDxfViewer = dynamic(() => import("@/components/ProfessionalDxfViewer"), { ssr: false });
 const CadSemantic3DPreview = dynamic(() => import("@/components/CadSemantic3DPreview"), { ssr: false });
 const CadGlbPreview = dynamic(() => import("@/components/CadGlbPreview"), { ssr: false });
+const CadPresentationTour = dynamic(() => import("@/components/CadPresentationTour"), { ssr: false });
 const CadProjectPreview = dynamic(() => import("@/components/CadProjectPreview"), { ssr: false });
 
 
@@ -200,6 +201,7 @@ export default function ArchitecturalFileImporter(){
   const [nextFloorIndex,setNextFloorIndex]=useState(1);
   const [projectAssembled,setProjectAssembled]=useState(false);
   const [manualSnapshotAt,setManualSnapshotAt]=useState<string>("");
+  const [previewMode,setPreviewMode]=useState<"orbit"|"tour">("orbit");
   const [ifcBim,setIfcBim]=useState<{base64:string;previewGlbBase64:string;walls:number;bytes:number;schema?:string;previewMeshes?:number;previewFaces?:number;doors?:number;windows?:number;glassPanels?:number;roomCount?:number;rooms?:Array<{id:number;area:number;x:number;y:number}>}|null>(null);
   const previewAnchorRef=useRef<HTMLDivElement|null>(null);
   useEffect(()=>{
@@ -859,7 +861,22 @@ export default function ArchitecturalFileImporter(){
               Oda {r.id}: <b>{r.area.toFixed(2)} m²</b>
             </div>)}
           </div>}
-          <CadGlbPreview base64={ifcBim.previewGlbBase64}/>
+          <div style={{display:"flex",gap:7,marginBottom:9}}>
+            <button type="button" onClick={()=>setPreviewMode("orbit")} style={{
+              padding:"8px 11px",border:"1px solid #b8cce6",borderRadius:8,
+              background:previewMode==="orbit"?"#176be0":"#fff",color:previewMode==="orbit"?"#fff":"#355d82",
+              fontWeight:800,cursor:"pointer"
+            }}>3D Genel Görünüm</button>
+            <button type="button" onClick={()=>setPreviewMode("tour")} style={{
+              padding:"8px 11px",border:"1px solid #b8cce6",borderRadius:8,
+              background:previewMode==="tour"?"#117a4b":"#fff",color:previewMode==="tour"?"#fff":"#355d82",
+              fontWeight:800,cursor:"pointer"
+            }}>Daire İçi Gez</button>
+          </div>
+          {previewMode==="tour"
+            ? <CadPresentationTour base64={ifcBim.previewGlbBase64} rooms={ifcBim.rooms||[]}/>
+            : <CadGlbPreview base64={ifcBim.previewGlbBase64}/>}
+
         </div>}
 
         {builtFloors.length>0&&<div ref={previewAnchorRef} style={{marginTop:16,scrollMarginTop:18}}>

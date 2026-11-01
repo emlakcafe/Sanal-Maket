@@ -472,7 +472,8 @@ export default function ArchitecturalFileImporter(){
       });
       setAnalysisProgress(100);
       setGenerationStage("Architecture Engine v2 zemin kat hazır");
-      const v2=result?.reconstruction?.v2;\n      setMessage(`Architecture Engine v2 hazır: ${out.walls||0} IfcWall · çift çizgi ${v2?.pairedWallCount||0} · kurtarılan tek çizgi ${v2?.fallbackWallCount||0}. Önizlemeyi DWG ile karşılaştırın.`);
+      const v2=(result as any)?.reconstruction?.v2;
+      setMessage(`Architecture Engine v2 hazır: ${out.walls||0} IfcWall · çift çizgi ${v2?.pairedWallCount||0} · kurtarılan tek çizgi ${v2?.fallbackWallCount||0}. Önizlemeyi DWG ile karşılaştırın.`);
       setTimeout(()=>previewAnchorRef.current?.scrollIntoView({behavior:"smooth",block:"start"}),60);
     }catch(e){
       if(timer){clearInterval(timer);timer=null;}

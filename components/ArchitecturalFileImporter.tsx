@@ -415,6 +415,72 @@ export default function ArchitecturalFileImporter(){
       setAnalysisBusy(false);
     }
   }
+  async function createProfessionalBimGroundV2(){
+    if(!dxfText) return;
+    if(!selection){
+      setMessage("Önce zemin kat planını sürükleyerek seçin.");
+      return;
+    }
+
+    setAnalysisBusy(true);
+    setIfcBim(null);
+    setAnalysis(null);
+    setAnalysisProgress(8);
+    setGenerationStage("Architecture Engine v2: CAD planı analiz ediliyor");
+
+    let timer: ReturnType<typeof setInterval> | null = null;
+    try{
+      timer=setInterval(()=>setAnalysisProgress(prev=>Math.min(78,prev+4)),180);
+
+      const res=await fetch("/api/cad/analyze-v2",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({dxfText,selection,unitMode,wallThickness})
+      });
+      if(!res.ok){
+        const err=await res.json().catch(()=>({error:"CAD analizi başarısız."}));
+        throw new Error(err.detail || err.error || "CAD analizi başarısız.");
+      }
+      const result=await res.json() as CadSemanticAnalysis;
+
+      if(timer){clearInterval(timer);timer=null;}
+      setAnalysisProgress(82);
+      setGenerationStage("IfcOpenShell: IfcWall elemanları oluşturuluyor");
+
+      const ifcRes=await fetch("/api/cad/build-ifc",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({analysis:result,floorHeight})
+      });
+      if(!ifcRes.ok){
+        const err=await ifcRes.json().catch(()=>({error:"IFC üretimi başarısız."}));
+        throw new Error(err.detail || err.error || "IFC üretimi başarısız.");
+      }
+      const out=await ifcRes.json();
+
+      setAnalysisProgress(96);
+      setGenerationStage("web-ifc: BIM modeli hazırlanıyor");
+      setAnalysis(result);
+      setIfcBim({
+        base64:out.ifcBase64,
+        previewGlbBase64:out.previewGlbBase64,
+        walls:Number(out.walls||0),
+        bytes:Number(out.bytes||0),
+        schema:out.schema,
+        previewMeshes:Number(out.previewMeshes||0),
+        previewFaces:Number(out.previewFaces||0)
+      });
+      setAnalysisProgress(100);
+      setGenerationStage("Architecture Engine v2 zemin kat hazır");
+      const v2=result?.reconstruction?.v2;\n      setMessage(`Architecture Engine v2 hazır: ${out.walls||0} IfcWall · çift çizgi ${v2?.pairedWallCount||0} · kurtarılan tek çizgi ${v2?.fallbackWallCount||0}. Önizlemeyi DWG ile karşılaştırın.`);
+      setTimeout(()=>previewAnchorRef.current?.scrollIntoView({behavior:"smooth",block:"start"}),60);
+    }catch(e){
+      if(timer){clearInterval(timer);timer=null;}
+      setMessage(e instanceof Error?e.message:String(e));
+    }finally{
+      setAnalysisBusy(false);
+    }
+  }
 
   async function createCurrentFloor(){
     if(!dxfText) return;
@@ -702,14 +768,14 @@ export default function ArchitecturalFileImporter(){
           </div>
 
           {buildStep==="ground-select"&&<div style={{display:"grid",gap:7}}>
-            <button type="button" onClick={createProfessionalBimGround} disabled={analysisBusy||!selection} style={{
+            <button type="button" onClick={createProfessionalBimGroundV2} disabled={analysisBusy||!selection} style={{
               width:"100%",padding:"12px 10px",border:0,borderRadius:9,
-              background:selection?"#117a4b":"#9db6d5",color:"#fff",fontWeight:900,cursor:selection?"pointer":"not-allowed"
-            }}>{analysisBusy?`BIM Motoru işliyor · %${analysisProgress}`:"Profesyonel BIM Motoru ile Oluştur"}</button>
-            <button type="button" onClick={createCurrentFloor} disabled={analysisBusy||!selection} style={{
+              background:selection?"#0b7a3f":"#9db6d5",color:"#fff",fontWeight:900,cursor:selection?"pointer":"not-allowed"
+            }}>{analysisBusy?`Architecture Engine v2 işliyor · %${analysisProgress}`:"Architecture Engine v2 ile Oluştur"}</button>
+            <button type="button" onClick={createProfessionalBimGround} disabled={analysisBusy||!selection} style={{
               width:"100%",padding:"9px",border:"1px solid #b7c7da",borderRadius:8,
               background:"#fff",color:"#58718e",fontWeight:700,cursor:selection?"pointer":"not-allowed",fontSize:11
-            }}>Eski GLB motoru (yedek)</button>
+            }}>Eski Profesyonel BIM Motoru (yedek)</button>
           </div>}
 
           {buildStep==="upper-select"&&<button type="button" onClick={createCurrentFloor} disabled={analysisBusy||!selection} style={{

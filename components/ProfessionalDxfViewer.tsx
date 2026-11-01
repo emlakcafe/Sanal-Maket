@@ -271,7 +271,7 @@ export default function ProfessionalDxfViewer({
 
   const polygonPoints=screenPoints.map(p=>`${p.x},${p.y}`).join(" ");
 
-  return <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) 230px",gap:12,minHeight:620,position:"relative"}}>
+  return <div style={{display:"block",minHeight:620,position:"relative"}}>
     {loading&&<div style={{
       position:"absolute",inset:0,zIndex:20,display:"grid",placeItems:"center",
       background:"rgba(6,19,31,.94)",backdropFilter:"blur(4px)",borderRadius:14
@@ -288,7 +288,7 @@ export default function ProfessionalDxfViewer({
     </div>}
 
     {error&&<div style={{
-      position:"absolute",left:18,right:250,top:70,zIndex:21,padding:12,borderRadius:9,
+      position:"absolute",left:18,right:18,top:70,zIndex:21,padding:12,borderRadius:9,
       background:"#fff1f1",border:"1px solid #e79a9a",color:"#9b1c1c",fontSize:12
     }}>CAD görüntüleyici hatası: {error}</div>}
 
@@ -337,16 +337,7 @@ export default function ProfessionalDxfViewer({
       </div>
     </section>
 
-    <aside style={{border:"1px solid #d6e0ed",borderRadius:12,padding:12,background:"#fff",minWidth:0}}>
-      <b style={{fontSize:13}}>CAD Katmanları</b>
-      <div style={{fontSize:10,color:"#71839c",marginTop:4}}>Katmanı kapatınca çizimden anında gizlenir.</div>
-      <div style={{marginTop:10,display:"grid",gap:5,maxHeight:555,overflow:"auto"}}>
-        {layers.map(l=><label key={l.name} style={{display:"flex",gap:7,alignItems:"flex-start",fontSize:11,wordBreak:"break-word",cursor:"pointer"}}>
-          <input type="checkbox" checked={l.visible} onChange={e=>toggleLayer(l.name,e.target.checked)}/>
-          <span>{l.name}</span>
-        </label>)}
-      </div>
-    </aside>
+
   </div>;
 }
 

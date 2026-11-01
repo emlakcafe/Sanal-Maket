@@ -170,7 +170,7 @@ def orient_like(a1,a2,b1,b2):
     flip=math.hypot(a1["x"]-b2["x"],a1["y"]-b2["y"])+math.hypot(a2["x"]-b1["x"],a2["y"]-b1["y"])
     return (b1,b2) if same <= flip else (b2,b1)
 
-def reconstruct_walls(entities, unit_scale):
+def reconstruct_walls(entities, unit_scale, preferred_thickness=0.08):
     raw=[]
     for item in entities:
         if item.get("kind")!="wall":
@@ -185,8 +185,9 @@ def reconstruct_walls(entities, unit_scale):
                 "layer":item.get("layer","")
             })
 
-    min_thick=max(0.07/unit_scale,1e-6)
-    max_thick=max(0.45/unit_scale,min_thick*1.1)
+    preferred=max(0.04,min(0.60,float(preferred_thickness or 0.08)))
+    min_thick=max(max(0.04,preferred*0.45)/unit_scale,1e-6)
+    max_thick=max(max(0.60,preferred*3.0)/unit_scale,min_thick*1.1)
     max_angle=math.radians(5.0)
 
     walls=[]
@@ -434,8 +435,9 @@ def main():
     selection_path = Path(sys.argv[2])
     payload = json.loads(selection_path.read_text(encoding="utf-8"))
     region = payload.get("selection") if isinstance(payload, dict) and "selection" in payload else payload
-    unit_mode = payload.get("unitMode","mm") if isinstance(payload, dict) else "mm"
-    unit_scale = {"mm":0.001,"cm":0.01,"m":1.0}.get(unit_mode,0.001)
+    unit_mode = payload.get("unitMode","cm") if isinstance(payload, dict) else "cm"
+    unit_scale = {"mm":0.001,"cm":0.01,"m":1.0}.get(unit_mode,0.01)
+    preferred_thickness = float(payload.get("wallThickness",0.08)) if isinstance(payload, dict) else 0.08
 
     try:
         doc = ezdxf.readfile(str(dxf_path))
@@ -558,7 +560,7 @@ def main():
         })
     layers.sort(key=lambda x:(-x["confidence"],-x["entityCount"]))
 
-    wall_segments = reconstruct_walls(entities, unit_scale)
+    wall_segments = reconstruct_walls(entities, unit_scale, preferred_thickness)
     openings = reconstruct_openings(entities, wall_segments, unit_scale)
 
     warnings = []
@@ -577,6 +579,7 @@ def main():
 
     result = {
         "engine":"ezdxf",
+        "modelSettings":{"unitMode":unit_mode,"unitScale":unit_scale,"preferredWallThickness":preferred_thickness},
         "dxfVersion":doc.dxfversion,
         "layout":best["name"],
         "selectionDiagnostics":{

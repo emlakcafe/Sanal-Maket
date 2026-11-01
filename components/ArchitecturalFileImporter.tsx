@@ -236,8 +236,6 @@ export default function ArchitecturalFileImporter(){
     if(Number.isFinite(saved.nextFloorIndex)) setNextFloorIndex(saved.nextFloorIndex);
     if(typeof saved.projectAssembled==="boolean") setProjectAssembled(saved.projectAssembled);
     if(saved.ifcBim) setIfcBim(saved.ifcBim);
-    if(Number.isFinite(saved.floorHeight)) setFloorHeight(saved.floorHeight);
-    if(Number.isFinite(saved.wallThickness)) setWallThickness(saved.wallThickness);
     if(typeof saved.dxfText==="string"){
       setDxfText(saved.dxfText);
       if(saved.dxfText){
@@ -669,19 +667,18 @@ export default function ArchitecturalFileImporter(){
           {manualSnapshotAt&&<div style={{fontSize:10,color:"#28653b",background:"#eaf7ef",padding:7,borderRadius:7,marginBottom:8}}>
             Güvenli kayıt: {manualSnapshotAt}
           </div>}
-          <label style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>Kat yüksekliği (m)
-            <input type="number" step=".05" min="2" max="8" value={floorHeight} onChange={e=>setFloorHeight(Number(e.target.value)||3)} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}/>
-          </label>
-          <label style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>Duvar kalınlığı (m)
-            <input type="number" step=".01" min=".08" max="1" value={wallThickness} onChange={e=>setWallThickness(Number(e.target.value)||.2)} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}/>
-          </label>
-          <label style={{display:"grid",gap:5,fontSize:11,marginBottom:10}}>CAD birimi
-            <select value={unitMode} onChange={e=>setUnitMode(e.target.value as "mm"|"cm"|"m")} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}>
-              <option value="mm">Milimetre (mm)</option>
-              <option value="cm">Santimetre (cm)</option>
-              <option value="m">Metre (m)</option>
-            </select>
-          </label>
+          <div style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>
+            <span>Kat yüksekliği</span>
+            <div style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7,background:"#f8fafc",fontWeight:800,color:"#174b86"}}>2,80 m · Sabit</div>
+          </div>
+          <div style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>
+            <span>Duvar kalınlığı</span>
+            <div style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7,background:"#f8fafc",fontWeight:800,color:"#174b86"}}>0,15 m · Sabit</div>
+          </div>
+          <div style={{display:"grid",gap:5,fontSize:11,marginBottom:10}}>
+            <span>CAD birimi</span>
+            <div style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7,background:"#f8fafc",fontWeight:800,color:"#174b86"}}>Milimetre (mm) · Sabit</div>
+          </div>
           <div style={{fontSize:10,padding:8,borderRadius:7,background:selection?"#eaf7ef":"#fff3df",color:selection?"#28653b":"#8a5a13",marginBottom:10}}>
             {selection
               ? (buildStep==="ground-select"

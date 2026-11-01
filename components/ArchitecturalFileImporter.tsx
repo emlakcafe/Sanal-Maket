@@ -190,11 +190,11 @@ export default function ArchitecturalFileImporter(){
   const [analysis,setAnalysis]=useState<CadSemanticAnalysis|null>(null);
   const [analysisBusy,setAnalysisBusy]=useState(false);
   const [analysisProgress,setAnalysisProgress]=useState(0);
-  const [floorHeight,setFloorHeight]=useState(3.0);
-  const [wallThickness,setWallThickness]=useState(0.20);
+  const [floorHeight]=useState(2.8);
+  const [wallThickness]=useState(0.15);
   const [selection,setSelection]=useState<CadSelectionRegion|null>(null);
   const [generationStage,setGenerationStage]=useState("Hazır");
-  const [unitMode,setUnitMode]=useState<"mm"|"cm"|"m">("mm");
+  const [unitMode]=useState<"mm"|"cm"|"m">("mm");
   const [builtFloors,setBuiltFloors]=useState<BuiltFloor[]>([]);
   const [buildStep,setBuildStep]=useState<BuildStep>("ground-select");
   const [nextFloorIndex,setNextFloorIndex]=useState(1);
@@ -236,7 +236,6 @@ export default function ArchitecturalFileImporter(){
     if(Number.isFinite(saved.nextFloorIndex)) setNextFloorIndex(saved.nextFloorIndex);
     if(typeof saved.projectAssembled==="boolean") setProjectAssembled(saved.projectAssembled);
     if(saved.ifcBim) setIfcBim(saved.ifcBim);
-    if(saved.unitMode) setUnitMode(saved.unitMode);
     if(Number.isFinite(saved.floorHeight)) setFloorHeight(saved.floorHeight);
     if(Number.isFinite(saved.wallThickness)) setWallThickness(saved.wallThickness);
     if(typeof saved.dxfText==="string"){

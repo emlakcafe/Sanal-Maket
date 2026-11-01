@@ -190,11 +190,11 @@ export default function ArchitecturalFileImporter(){
   const [analysis,setAnalysis]=useState<CadSemanticAnalysis|null>(null);
   const [analysisBusy,setAnalysisBusy]=useState(false);
   const [analysisProgress,setAnalysisProgress]=useState(0);
-  const [floorHeight]=useState(2.8);
-  const [wallThickness]=useState(0.15);
+  const [floorHeight,setFloorHeight]=useState(2.0);
+  const [wallThickness,setWallThickness]=useState(0.08);
   const [selection,setSelection]=useState<CadSelectionRegion|null>(null);
   const [generationStage,setGenerationStage]=useState("Hazır");
-  const [unitMode]=useState<"mm"|"cm"|"m">("mm");
+  const [unitMode,setUnitMode]=useState<"mm"|"cm"|"m">("cm");
   const [builtFloors,setBuiltFloors]=useState<BuiltFloor[]>([]);
   const [buildStep,setBuildStep]=useState<BuildStep>("ground-select");
   const [nextFloorIndex,setNextFloorIndex]=useState(1);
@@ -236,6 +236,9 @@ export default function ArchitecturalFileImporter(){
     if(Number.isFinite(saved.nextFloorIndex)) setNextFloorIndex(saved.nextFloorIndex);
     if(typeof saved.projectAssembled==="boolean") setProjectAssembled(saved.projectAssembled);
     if(saved.ifcBim) setIfcBim(saved.ifcBim);
+    if(Number.isFinite(saved.floorHeight)) setFloorHeight(saved.floorHeight);
+    if(Number.isFinite(saved.wallThickness)) setWallThickness(saved.wallThickness);
+    if(saved.unitMode==="mm"||saved.unitMode==="cm"||saved.unitMode==="m") setUnitMode(saved.unitMode);
     if(typeof saved.dxfText==="string"){
       setDxfText(saved.dxfText);
       if(saved.dxfText){
@@ -366,7 +369,7 @@ export default function ArchitecturalFileImporter(){
       const res=await fetch("/api/cad/analyze",{
         method:"POST",
         headers:{"content-type":"application/json"},
-        body:JSON.stringify({dxfText,selection,unitMode})
+        body:JSON.stringify({dxfText,selection,unitMode,wallThickness})
       });
       if(!res.ok){
         const err=await res.json().catch(()=>({error:"CAD analizi başarısız."}));
@@ -436,7 +439,7 @@ export default function ArchitecturalFileImporter(){
       const res=await fetch("/api/cad/analyze",{
         method:"POST",
         headers:{"content-type":"application/json"},
-        body:JSON.stringify({dxfText,selection,unitMode})
+        body:JSON.stringify({dxfText,selection,unitMode,wallThickness})
       });
       if(!res.ok){
         const err=await res.json().catch(()=>({error:"CAD analizi basarisiz."}));
@@ -529,7 +532,7 @@ export default function ArchitecturalFileImporter(){
       const res=await fetch("/api/cad/analyze",{
         method:"POST",
         headers:{"content-type":"application/json"},
-        body:JSON.stringify({dxfText,selection,unitMode})
+        body:JSON.stringify({dxfText,selection,unitMode,wallThickness})
       });
       if(!res.ok){
         const err=await res.json().catch(()=>({error:"Çatı CAD analizi başarısız."}));
@@ -667,18 +670,19 @@ export default function ArchitecturalFileImporter(){
           {manualSnapshotAt&&<div style={{fontSize:10,color:"#28653b",background:"#eaf7ef",padding:7,borderRadius:7,marginBottom:8}}>
             Güvenli kayıt: {manualSnapshotAt}
           </div>}
-          <div style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>
-            <span>Kat yüksekliği</span>
-            <div style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7,background:"#f8fafc",fontWeight:800,color:"#174b86"}}>2,80 m · Sabit</div>
-          </div>
-          <div style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>
-            <span>Duvar kalınlığı</span>
-            <div style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7,background:"#f8fafc",fontWeight:800,color:"#174b86"}}>0,15 m · Sabit</div>
-          </div>
-          <div style={{display:"grid",gap:5,fontSize:11,marginBottom:10}}>
-            <span>CAD birimi</span>
-            <div style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7,background:"#f8fafc",fontWeight:800,color:"#174b86"}}>Milimetre (mm) · Sabit</div>
-          </div>
+          <label style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>Kat yüksekliği (m)
+            <input type="number" step=".05" min="2" max="8" value={floorHeight} onChange={e=>setFloorHeight(Number(e.target.value)||2)} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}/>
+          </label>
+          <label style={{display:"grid",gap:5,fontSize:11,marginBottom:8}}>Duvar kalınlığı (m)
+            <input type="number" step=".01" min=".05" max=".60" value={wallThickness} onChange={e=>setWallThickness(Number(e.target.value)||.08)} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}/>
+          </label>
+          <label style={{display:"grid",gap:5,fontSize:11,marginBottom:10}}>CAD birimi
+            <select value={unitMode} onChange={e=>setUnitMode(e.target.value as "mm"|"cm"|"m")} style={{padding:8,border:"1px solid #c6d5e7",borderRadius:7}}>
+              <option value="mm">Milimetre (mm)</option>
+              <option value="cm">Santimetre (cm)</option>
+              <option value="m">Metre (m)</option>
+            </select>
+          </label>
           <div style={{fontSize:10,padding:8,borderRadius:7,background:selection?"#eaf7ef":"#fff3df",color:selection?"#28653b":"#8a5a13",marginBottom:10}}>
             {selection
               ? (buildStep==="ground-select"

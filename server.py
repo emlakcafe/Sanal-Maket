@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio, math, re, time, unicodedata, urllib.robotparser
 import licensed_sources as feeds
+import first_party
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -54,7 +55,7 @@ async def all_addresses(c,path):
 @app.get("/",response_class=HTMLResponse)
 async def home():return Path(__file__).with_name("index.html").read_text(encoding="utf-8")
 @app.get("/health")
-async def health():return {"status":"ok","version":"v14","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM",*feeds.LISTING_SOURCES,*feeds.VALUATION_SOURCES],"coverage":"dynamic-national"}
+async def health():return {"status":"ok","version":"v15","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM",*feeds.LISTING_SOURCES,*feeds.VALUATION_SOURCES],"coverage":"dynamic-national"}
 @app.get("/api/provinces")
 async def provinces():return sorted([{"id":i+1,"name":n} for i,n in enumerate(names)],key=lambda x:norm(x["name"]))
 @app.get("/api/districts/{province_id}")
@@ -287,7 +288,7 @@ async def analyze(req:Req):
                 async def collect(source):
                     stats=source_stats[source]
                     try:
-                        rows=await feeds.listings(c,req,source,stats,norm,local)
+                        rows=await first_party.collect(c,req,stats,norm,local) if source=='Emlak Cafe' and not feeds.config('EMLAKCAFE')[0] else await feeds.listings(c,req,source,stats,norm,local)
                         items.extend(rows)
                     except Exception:
                         stats.update(status="error",message="Kaynak işleme hatası")
@@ -358,11 +359,11 @@ async def analyze(req:Req):
         if reference and assumed:warnings.append("Referans fiyat, taşınmazın konut/villa imarlı olduğu varsayımına bağlıdır. Tapu niteliği imar durumunu kanıtlamaz.")
         if any(not i["live"] for i in items):warnings.append("26.11.2026 tarihli web araştırması kayıtları ayrı etiketlidir; canlı ilan aktifliği yeniden doğrulanmış sayılmaz.")
         print(f"ANALYZE subject={bool(subject)} rows={len(items)} nearby={len(nearby)} live={sum(i['live'] for i in items)} strict={len(strict)} reference={bool(reference)}",flush=True)
-        return {"version":"v14","source_stats":source_stats,"external_valuations":external,"subject":subject,"items":items,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"Türkiye geneli lisanslı çok kaynaklı tarama. Yalnızca yapılandırılmış ve yetkilendirilmiş güncel veri akışları kullanılır. Mesafe parsel merkezleri arasındadır. Fiyatlar gerçekleşen satış değil, ilan talep fiyatlarıdır."}
+        return {"version":"v15","source_stats":source_stats,"external_valuations":external,"research_links":first_party.research_links(req),"subject":subject,"items":items,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"Türkiye geneli: Emlak Cafe yayımlanmış ilanları ve yetkilendirilmiş veri akışları. Araştırma bağlantıları otomatik toplanmış ilan sayılmaz. Mesafe parsel merkezleri arasındadır. Fiyatlar gerçekleşen satış değil, ilan talep fiyatlarıdır."}
 
 @app.get("/api/test/akkoy")
 async def test_akkoy():
-    key="test:akkoy:v14"
+    key="test:akkoy:v15"
     old=cache.get(key)
     if old and time.monotonic()-old[0]<300:return old[1]
     result=await analyze(Req(province="Yalova",district="Termal",place="Akköy",block="354",parcel="12",zoning="unknown"))

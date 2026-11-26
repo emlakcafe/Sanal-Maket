@@ -15,7 +15,7 @@ LOCK=asyncio.Lock()
 last_call=0.0
 
 def config():
-    return (os.getenv("EC_WEB_SEARCH_ENABLED","0")=="1",os.getenv("BRAVE_SEARCH_API_KEY","").strip())
+    return (os.getenv("EC_WEB_SEARCH_ENABLED","1")=="1",os.getenv("BRAVE_SEARCH_API_KEY","").strip())
 
 def queries(req):
     location=f"{req.province} {req.district} {req.place}"
@@ -44,12 +44,21 @@ def plain(v):
 def distinct_value(pattern,text):
     found=set()
     for m in re.finditer(pattern,text,re.I):
-        value=m.group(1).replace(" ","").replace(".","").replace(",",".")
+        value=m.group(1).replace(" ","")
+        if "," in value and "." in value:
+            value=value.replace(".","").replace(",",".") if value.rfind(",")>value.rfind(".") else value.replace(",","")
+        elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+",value):value=value.replace(".","")
+        elif re.fullmatch(r"\d{1,3}(?:,\d{3})+",value):value=value.replace(",","")
+        elif "," in value:value=value.replace(",",".")
         try:
             n=float(value)
             if n>0:found.add(n)
         except ValueError:pass
     return next(iter(found)) if len(found)==1 else None
+
+def canonical(url):
+    u=urlsplit(url)
+    return ((u.hostname or "").lower().removeprefix("www."),u.path.rstrip("/").lower())
 
 def candidate(row,req,norm,local):
     if not isinstance(row,dict):return None
@@ -90,7 +99,7 @@ async def search(client,req,norm,local):
                 if delay:await asyncio.sleep(delay)
                 last_call=time.monotonic()
                 status["queries"]+=1
-                r=await client.get(ENDPOINT,params={"q":q,"country":"TR","search_lang":"tr","count":20,"text_decorations":"false","result_filter":"web"},headers={"X-Subscription-Token":key,"Accept":"application/json"},timeout=6,follow_redirects=False)
+                r=await client.get(ENDPOINT,params={"q":q,"country":"TR","search_lang":"tr","count":20,"text_decorations":"false","result_filter":"web","freshness":"pm"},headers={"X-Subscription-Token":key,"Accept":"application/json"},timeout=6,follow_redirects=False)
             if r.status_code in (401,403,429):
                 errors.append("HTTP "+str(r.status_code));break
             r.raise_for_status()

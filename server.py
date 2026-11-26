@@ -53,7 +53,7 @@ async def all_addresses(c,path):
 @app.get("/",response_class=HTMLResponse)
 async def home():return Path(__file__).with_name("index.html").read_text(encoding="utf-8")
 @app.get("/health")
-async def health():return {"status":"ok","version":"v12","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"coverage":"dynamic-national"}
+async def health():return {"status":"ok","version":"v13","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"coverage":"dynamic-national"}
 @app.get("/api/provinces")
 async def provinces():return sorted([{"id":i+1,"name":n} for i,n in enumerate(names)],key=lambda x:norm(x["name"]))
 @app.get("/api/districts/{province_id}")
@@ -155,11 +155,11 @@ def locality_in(text,req):
     return bool(place and re.search(r"\b"+re.escape(place)+r"\b",n) and re.search(r"\b"+re.escape(norm(req.district))+r"\b",n))
 def price_from(s):
     return next((num(m.group(1)) for m in re.finditer(r"(?<![\d.,])([\d.,]+)\s*(?:₺|TL)(?!\s*/)",s,re.I) if (num(m.group(1)) or 0)>=10000),None)
-def parse_card(a,url,req,source):
+def parse_card(a,url,req,source,sale_context=False):
     for el in [a,*list(a.parents)[:5]]:
         if not el:continue
         t=el.get_text(" ",strip=True)
-        if len(t)>1300 or not locality_in(t,req) or "satilik" not in norm(t):continue
+        if len(t)>1300 or not locality_in(t,req) or ("satilik" not in norm(t) and not sale_context) or ("kiralik" in norm(t) and "satilik" not in norm(t)):continue
         links={urlsplit(urljoin(url,x.get("href",""))).path for x in el.select("a[href]") if re.search(r"/(?:ilan/[^/]+-\d+|(?:tr/portfoy|en/property)/P\d+)/?$",urlsplit(urljoin(url,x.get("href",""))).path,re.I)}
         if len(links)>1:continue
         m=re.search(r"(?<![\d.,/])([\d.,]+)\s*m[²2]\b",t,re.I)
@@ -209,7 +209,9 @@ def parse_detail(html,url,req,source):
         if m:b,p=m.groups()
     if not area or not price:return None
     return item_record(title,url,area,price,kind,b,p,source,True,detail_verified=True)
-async def search_source(c,req,source):
+async def search_source(c,req,source,stats=None):
+    stats=stats if stats is not None else {}
+    stats.update(links=0,listed=0,verified=0)
     base=SOURCES[source]
     path=("/tr/arsa-arazi/satilik/"+slug(req.province)+"/"+slug(req.district)) if source=="RE/MAX" else ("/satilik-arsa/"+slug(req.province)+"-"+slug(req.district)+"-"+slug(local(req.place)))
     url=base+path
@@ -239,8 +241,9 @@ async def search_source(c,req,source):
         if not ok:continue
         u=base+p.path.rstrip("/")
         if not rp.can_fetch(UA,u):continue
-        card=parse_card(a,u,req,source)
+        card=parse_card(a,u,req,source,"satilik" in urlsplit(url).path)
         if u not in candidates or card:candidates[u]=card
+    stats["links"]=len(candidates)
     if not candidates:raise ValueError("liste sayfasından ilan bağlantısı alınamadı")
     ordered=sorted(candidates,key=lambda u:candidates[u] is None)[:24]
     sem=asyncio.Semaphore(3);out=[]
@@ -261,6 +264,7 @@ async def search_source(c,req,source):
     except TimeoutError:
         for u in ordered:
             if candidates[u] and not any(x["url"]==u for x in out):out.append(candidates[u])
+    stats["listed"]=len(out);stats["verified"]=sum(bool(x.get("detail_verified")) for x in out)
     print(f"SOURCE {source}: links={len(candidates)} rows={len(out)} details={sum(bool(x.get('detail_verified')) for x in out)}",flush=True)
     return out
 
@@ -271,7 +275,7 @@ def quantile(a,q):
 async def analyze(req:Req):
     if gate.locked():raise HTTPException(429,"Test sunucusu meşgul. Biraz sonra deneyin.")
     async with gate:
-        subject=None;loc=None;items=[];warnings=[]
+        subject=None;loc=None;items=[];warnings=[];source_stats={s:{"links":0,"listed":0,"verified":0} for s in SOURCES}
         async with client() as c:
             async def get_subject():
                 nonlocal subject,loc
@@ -281,7 +285,7 @@ async def analyze(req:Req):
             async def get_items():
                 async def collect(source):
                     try:
-                        rows=await search_source(c,req,source)
+                        rows=await search_source(c,req,source,source_stats[source])
                         items.extend(rows)
                         if not rows:warnings.append(source+": erişilebilir sayfalarda uygun alanlar okunamadı.")
                     except Exception as e:warnings.append(source+": "+(str(e)[:180] or "Bağlantı zaman aşımı"))
@@ -341,11 +345,11 @@ async def analyze(req:Req):
         if reference and assumed:warnings.append("Referans fiyat, taşınmazın konut/villa imarlı olduğu varsayımına bağlıdır. Tapu niteliği imar durumunu kanıtlamaz.")
         if any(not i["live"] for i in items):warnings.append("26.11.2026 tarihli web araştırması kayıtları ayrı etiketlidir; canlı ilan aktifliği yeniden doğrulanmış sayılmaz.")
         print(f"ANALYZE subject={bool(subject)} rows={len(items)} nearby={len(nearby)} live={sum(i['live'] for i in items)} strict={len(strict)} reference={bool(reference)}",flush=True)
-        return {"version":"v12","subject":subject,"items":items,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"Türkiye geneli dinamik RE/MAX ve Emlakjet taraması. Erişim ve açık ilan verileriyle sınırlıdır; sabit örnek ilan kullanılmaz. Mesafe parsel merkezleri arasındadır. Fiyatlar gerçekleşen satış değil, ilan talep fiyatlarıdır."}
+        return {"version":"v13","source_stats":source_stats,"subject":subject,"items":items,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"Türkiye geneli dinamik RE/MAX ve Emlakjet taraması. Erişim ve açık ilan verileriyle sınırlıdır; sabit örnek ilan kullanılmaz. Mesafe parsel merkezleri arasındadır. Fiyatlar gerçekleşen satış değil, ilan talep fiyatlarıdır."}
 
 @app.get("/api/test/akkoy")
 async def test_akkoy():
-    key="test:akkoy:v12"
+    key="test:akkoy:v13"
     old=cache.get(key)
     if old and time.monotonic()-old[0]<300:return old[1]
     result=await analyze(Req(province="Yalova",district="Termal",place="Akköy",block="354",parcel="12",zoning="unknown"))

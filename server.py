@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio, math, re, time, unicodedata, urllib.robotparser
+import licensed_sources as feeds
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -53,7 +54,7 @@ async def all_addresses(c,path):
 @app.get("/",response_class=HTMLResponse)
 async def home():return Path(__file__).with_name("index.html").read_text(encoding="utf-8")
 @app.get("/health")
-async def health():return {"status":"ok","version":"v13","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"coverage":"dynamic-national"}
+async def health():return {"status":"ok","version":"v14","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM",*feeds.LISTING_SOURCES,*feeds.VALUATION_SOURCES],"coverage":"dynamic-national"}
 @app.get("/api/provinces")
 async def provinces():return sorted([{"id":i+1,"name":n} for i,n in enumerate(names)],key=lambda x:norm(x["name"]))
 @app.get("/api/districts/{province_id}")
@@ -275,7 +276,7 @@ def quantile(a,q):
 async def analyze(req:Req):
     if gate.locked():raise HTTPException(429,"Test sunucusu meşgul. Biraz sonra deneyin.")
     async with gate:
-        subject=None;loc=None;items=[];warnings=[];source_stats={s:{"links":0,"listed":0,"verified":0} for s in SOURCES}
+        subject=None;loc=None;items=[];warnings=[];external=[];source_stats={s:{"links":0,"listed":0,"verified":0} for s in (*feeds.LISTING_SOURCES,*feeds.VALUATION_SOURCES)}
         async with client() as c:
             async def get_subject():
                 nonlocal subject,loc
@@ -284,12 +285,23 @@ async def analyze(req:Req):
                 except Exception as e:warnings.append("TKGM: "+(str(e)[:180] or "Bağlantı zaman aşımı"))
             async def get_items():
                 async def collect(source):
+                    stats=source_stats[source]
                     try:
-                        rows=await search_source(c,req,source,source_stats[source])
+                        rows=await feeds.listings(c,req,source,stats,norm,local)
                         items.extend(rows)
-                        if not rows:warnings.append(source+": erişilebilir sayfalarda uygun alanlar okunamadı.")
-                    except Exception as e:warnings.append(source+": "+(str(e)[:180] or "Bağlantı zaman aşımı"))
-                await asyncio.gather(*(collect(x) for x in SOURCES))
+                    except Exception:
+                        stats.update(status="error",message="Kaynak işleme hatası")
+                async def collect_valuation(source):
+                    stats=source_stats[source]
+                    try:
+                        row=await feeds.valuation(c,req,source,stats,norm,local)
+                        if row:external.append(row)
+                    except Exception:
+                        stats.update(status="error",message="Değerleme kaynağı işleme hatası")
+                sem_sources=asyncio.Semaphore(5)
+                async def bounded(fn,name):
+                    async with sem_sources:await fn(name)
+                await asyncio.gather(*(bounded(collect,x) for x in feeds.LISTING_SOURCES),*(bounded(collect_valuation,x) for x in feeds.VALUATION_SOURCES))
 
             try:await asyncio.wait_for(asyncio.gather(get_subject(),get_items()),55)
             except TimeoutError:warnings.append("Kaynak sorgusu zaman aşımına uğradı.")
@@ -341,15 +353,16 @@ async def analyze(req:Req):
         reference_near=[i for i in nearby if comparable(i)]
         region=[i for i in items if comparable(i)]
         reference=band(reference_near,"1 km · kaynaklı ilan referansı") or band(region,"Mahalle/köy · bölgesel ilan referansı")
+        if not any(s.get("status") in {"ok","empty"} for n,s in source_stats.items() if n in feeds.LISTING_SOURCES):warnings.append("Henüz bağlı ve çalışır durumda yetkili ilan veri kaynağı yok; ilan yok anlamına gelmez.")
         if not estimate:warnings.append("Kesin 1 km canlı emsal bandı için en az üç konumu doğrulanmış güncel ilan ve bilinen imar türü gerekir.")
         if reference and assumed:warnings.append("Referans fiyat, taşınmazın konut/villa imarlı olduğu varsayımına bağlıdır. Tapu niteliği imar durumunu kanıtlamaz.")
         if any(not i["live"] for i in items):warnings.append("26.11.2026 tarihli web araştırması kayıtları ayrı etiketlidir; canlı ilan aktifliği yeniden doğrulanmış sayılmaz.")
         print(f"ANALYZE subject={bool(subject)} rows={len(items)} nearby={len(nearby)} live={sum(i['live'] for i in items)} strict={len(strict)} reference={bool(reference)}",flush=True)
-        return {"version":"v13","source_stats":source_stats,"subject":subject,"items":items,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"Türkiye geneli dinamik RE/MAX ve Emlakjet taraması. Erişim ve açık ilan verileriyle sınırlıdır; sabit örnek ilan kullanılmaz. Mesafe parsel merkezleri arasındadır. Fiyatlar gerçekleşen satış değil, ilan talep fiyatlarıdır."}
+        return {"version":"v14","source_stats":source_stats,"external_valuations":external,"subject":subject,"items":items,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"Türkiye geneli lisanslı çok kaynaklı tarama. Yalnızca yapılandırılmış ve yetkilendirilmiş güncel veri akışları kullanılır. Mesafe parsel merkezleri arasındadır. Fiyatlar gerçekleşen satış değil, ilan talep fiyatlarıdır."}
 
 @app.get("/api/test/akkoy")
 async def test_akkoy():
-    key="test:akkoy:v13"
+    key="test:akkoy:v14"
     old=cache.get(key)
     if old and time.monotonic()-old[0]<300:return old[1]
     result=await analyze(Req(province="Yalova",district="Termal",place="Akköy",block="354",parcel="12",zoning="unknown"))

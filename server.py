@@ -4,6 +4,7 @@ import licensed_sources as feeds
 import first_party
 import web_research
 import keyless_research
+import you_research
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -65,12 +66,12 @@ def connection_status():
         if name=="Emlak Cafe" and not include_first_party():continue
         allowed,url,token=feeds.config(code)
         if allowed and feeds.safe_url(url) and token:sources.append(name)
-    return {"first_party_enabled":include_first_party(),"web_search_enabled":enabled,"web_key_configured":bool(key),"keyless_enabled":keyless_research.enabled(),"configured_licensed_sources":sources}
+    return {"first_party_enabled":include_first_party(),"web_search_enabled":enabled,"web_key_configured":bool(key),"keyless_enabled":keyless_research.enabled(),"you_enabled":you_research.enabled(),"configured_licensed_sources":sources}
 @app.on_event("startup")
 async def log_connections():
-    print("V18 CONNECTIONS",connection_status(),flush=True)
+    print("V19 CONNECTIONS",connection_status(),flush=True)
 @app.get("/health")
-async def health():return {"status":"ok","version":"v18","mode":"independent-parcel-research","connections":connection_status(),"coverage":"dynamic-national"}
+async def health():return {"status":"ok","version":"v19","mode":"independent-parcel-research","connections":connection_status(),"coverage":"dynamic-national"}
 @app.get("/api/provinces")
 async def provinces():return sorted([{"id":i+1,"name":n} for i,n in enumerate(names)],key=lambda x:norm(x["name"]))
 @app.get("/api/districts/{province_id}")
@@ -321,7 +322,7 @@ async def analyze(req:Req):
 
             async def discover():
                 nonlocal web_candidates,web_status
-                try:web_candidates,web_status=await asyncio.wait_for(keyless_research.search(c,req,norm,local) if keyless_research.enabled() else web_research.search(c,req,norm,local),40)
+                try:web_candidates,web_status=await asyncio.wait_for(you_research.search(c,req,norm,local,max_queries=2,extract_limit=2) if you_research.enabled() else keyless_research.search(c,req,norm,local) if keyless_research.enabled() else web_research.search(c,req,norm,local),48)
                 except Exception:web_status={"status":"error","message":"İnternet araması zaman aşımı veya bağlantı hatası"}
             try:await asyncio.wait_for(asyncio.gather(get_subject(),get_items(),discover()),55)
             except TimeoutError:warnings.append("Kaynak sorgusu zaman aşımına uğradı.")
@@ -376,18 +377,18 @@ async def analyze(req:Req):
         reference=band(reference_near,"1 km · kaynaklı ilan referansı") or band(region,"Mahalle/köy · bölgesel ilan referansı")
         if not any(s.get("status") in {"ok","empty"} for n,s in source_stats.items() if n in feeds.LISTING_SOURCES):warnings.append("Harici doğrulanmış ilan veri bağlantısı hazır değil; bölgede ilan olmadığı anlamına gelmez.")
         if web_status.get("status")!="ok":warnings.append(web_status.get("message") or "Otomatik internet araması tamamlanamadı.")
-        print("V18 RESEARCH",web_status.get("status"),"candidates",len(web_candidates),"connections",connection_status(),flush=True)
-        web_reference=keyless_research.reference(web_candidates,subject,req,norm,quantile) if web_status.get("provider")=="Tavily keyless" else None
+        print("V19 RESEARCH",web_status,"candidates",len(web_candidates),"connections",connection_status(),flush=True)
+        web_reference=keyless_research.reference(web_candidates,subject,req,norm,quantile) if web_status.get("provider") in {"Tavily keyless","You.com MCP free"} else None
         if web_reference:warnings.append("İnternet referansı kesin 1 km emsali veya gerçekleşmiş satış değildir; ilan aktifliği ve imar durumu teyit edilmelidir.")
         if not estimate:warnings.append("Kesin 1 km canlı emsal bandı için en az üç konumu doğrulanmış güncel ilan ve bilinen imar türü gerekir.")
         if reference and assumed:warnings.append("Referans, tapudaki tarla niteliğine göre hesaplandı; güncel imar durumunu kanıtlamaz.")
         if any(not i["live"] for i in items):warnings.append("26.11.2026 tarihli web araştırması kayıtları ayrı etiketlidir; canlı ilan aktifliği yeniden doğrulanmış sayılmaz.")
         print(f"ANALYZE subject={bool(subject)} rows={len(items)} nearby={len(nearby)} live={sum(i['live'] for i in items)} strict={len(strict)} reference={bool(reference)}",flush=True)
-        return {"version":"v18","source_stats":source_stats,"external_valuations":external,"web_candidates":web_candidates,"web_status":web_status,"connections":connection_status(),"subject":subject,"items":items,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"web_reference":web_reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"Türkiye geneli bağımsız gayrimenkul araştırması. Emlak Cafe ilan bağlantısı isteğe bağlıdır. İnternet arama sonuçları ayrı gösterilir; koşullu bölgesel fiyat referansı canlı ve konumu doğrulanmış emsalden ayrıdır. Mesafe parsel merkezleri arasındadır. Fiyatlar gerçekleşen satış değil, ilan talep fiyatlarıdır."}
+        return {"version":"v19","source_stats":source_stats,"external_valuations":external,"web_candidates":web_candidates,"web_status":web_status,"connections":connection_status(),"subject":subject,"items":items,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"web_reference":web_reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"Türkiye geneli bağımsız gayrimenkul araştırması. Emlak Cafe ilan bağlantısı isteğe bağlıdır. İnternet arama sonuçları ayrı gösterilir; koşullu bölgesel fiyat referansı canlı ve konumu doğrulanmış emsalden ayrıdır. Mesafe parsel merkezleri arasındadır. Fiyatlar gerçekleşen satış değil, ilan talep fiyatlarıdır."}
 
 @app.get("/api/test/akkoy")
 async def test_akkoy():
-    key="test:akkoy:v18"
+    key="test:akkoy:v19"
     old=cache.get(key)
     if old and time.monotonic()-old[0]<300:return old[1]
     result=await analyze(Req(province="Yalova",district="Termal",place="Akköy",block="354",parcel="12",zoning="unknown"))

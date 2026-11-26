@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio, math, re, time, unicodedata, urllib.robotparser
+import asyncio, math, os, re, time, unicodedata, urllib.robotparser
 import licensed_sources as feeds
 import first_party
 import web_research
@@ -54,9 +54,22 @@ async def all_addresses(c,path):
         if not d or offset>=j.get("meta",{}).get("total",offset):break
     return [{"id":x["id"],"name":x["name"]} for x in rows if isinstance(x.get("id"),int) and isinstance(x.get("name"),str)]
 @app.get("/",response_class=HTMLResponse)
-async def home():return Path(__file__).with_name("index.html").read_text(encoding="utf-8")
+async def home():return HTMLResponse(Path(__file__).with_name("index.html").read_text(encoding="utf-8"),headers={"Cache-Control":"no-store, max-age=0","Pragma":"no-cache"})
+def include_first_party():
+    return os.getenv("EC_INCLUDE_FIRST_PARTY","0")=="1"
+def connection_status():
+    enabled,key=web_research.config()
+    sources=[]
+    for name,(code,_) in {**feeds.LISTING_SOURCES,**feeds.VALUATION_SOURCES}.items():
+        if name=="Emlak Cafe" and not include_first_party():continue
+        allowed,url,token=feeds.config(code)
+        if allowed and feeds.safe_url(url) and token:sources.append(name)
+    return {"first_party_enabled":include_first_party(),"web_search_enabled":enabled,"web_key_configured":bool(key),"configured_licensed_sources":sources}
+@app.on_event("startup")
+async def log_connections():
+    print("V17 CONNECTIONS",connection_status(),flush=True)
 @app.get("/health")
-async def health():return {"status":"ok","version":"v16","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM",*feeds.LISTING_SOURCES,*feeds.VALUATION_SOURCES],"coverage":"dynamic-national"}
+async def health():return {"status":"ok","version":"v17","mode":"independent-parcel-research","connections":connection_status(),"coverage":"dynamic-national"}
 @app.get("/api/provinces")
 async def provinces():return sorted([{"id":i+1,"name":n} for i,n in enumerate(names)],key=lambda x:norm(x["name"]))
 @app.get("/api/districts/{province_id}")
@@ -278,7 +291,7 @@ def quantile(a,q):
 async def analyze(req:Req):
     if gate.locked():raise HTTPException(429,"Test sunucusu meşgul. Biraz sonra deneyin.")
     async with gate:
-        subject=None;loc=None;items=[];warnings=[];external=[];web_candidates=[];web_status={};source_stats={s:{"links":0,"listed":0,"verified":0} for s in (*feeds.LISTING_SOURCES,*feeds.VALUATION_SOURCES)}
+        subject=None;loc=None;items=[];warnings=[];external=[];web_candidates=[];web_status={};source_stats={s:{"links":0,"listed":0,"verified":0} for s in (*feeds.LISTING_SOURCES,*feeds.VALUATION_SOURCES) if s!="Emlak Cafe" or include_first_party()}
         async with client() as c:
             async def get_subject():
                 nonlocal subject,loc
@@ -303,7 +316,7 @@ async def analyze(req:Req):
                 sem_sources=asyncio.Semaphore(5)
                 async def bounded(fn,name):
                     async with sem_sources:await fn(name)
-                await asyncio.gather(*(bounded(collect,x) for x in feeds.LISTING_SOURCES),*(bounded(collect_valuation,x) for x in feeds.VALUATION_SOURCES))
+                await asyncio.gather(*(bounded(collect,x) for x in feeds.LISTING_SOURCES if x in source_stats),*(bounded(collect_valuation,x) for x in feeds.VALUATION_SOURCES))
 
             async def discover():
                 nonlocal web_candidates,web_status
@@ -360,16 +373,18 @@ async def analyze(req:Req):
         reference_near=[i for i in nearby if comparable(i)]
         region=[i for i in items if comparable(i)]
         reference=band(reference_near,"1 km · kaynaklı ilan referansı") or band(region,"Mahalle/köy · bölgesel ilan referansı")
-        if not any(s.get("status") in {"ok","empty"} for n,s in source_stats.items() if n in feeds.LISTING_SOURCES):warnings.append("Henüz bağlı ve çalışır durumda yetkili ilan veri kaynağı yok; ilan yok anlamına gelmez.")
+        if not any(s.get("status") in {"ok","empty"} for n,s in source_stats.items() if n in feeds.LISTING_SOURCES):warnings.append("Harici doğrulanmış ilan veri bağlantısı hazır değil; bölgede ilan olmadığı anlamına gelmez.")
+        if web_status.get("status")!="ok":warnings.append(web_status.get("message") or "Otomatik internet araması tamamlanamadı.")
+        print("V17 RESEARCH",web_status.get("status"),"candidates",len(web_candidates),"connections",connection_status(),flush=True)
         if not estimate:warnings.append("Kesin 1 km canlı emsal bandı için en az üç konumu doğrulanmış güncel ilan ve bilinen imar türü gerekir.")
         if reference and assumed:warnings.append("Referans, tapudaki tarla niteliğine göre hesaplandı; güncel imar durumunu kanıtlamaz.")
         if any(not i["live"] for i in items):warnings.append("26.11.2026 tarihli web araştırması kayıtları ayrı etiketlidir; canlı ilan aktifliği yeniden doğrulanmış sayılmaz.")
         print(f"ANALYZE subject={bool(subject)} rows={len(items)} nearby={len(nearby)} live={sum(i['live'] for i in items)} strict={len(strict)} reference={bool(reference)}",flush=True)
-        return {"version":"v16","source_stats":source_stats,"external_valuations":external,"web_candidates":web_candidates,"web_status":web_status,"subject":subject,"items":items,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"Türkiye geneli: Emlak Cafe yayımlanmış ilanları ve yetkilendirilmiş veri akışları. İnternet arama adayları aktiflik ve konum doğrulanmadan emsal sayılmaz. Mesafe parsel merkezleri arasındadır. Fiyatlar gerçekleşen satış değil, ilan talep fiyatlarıdır."}
+        return {"version":"v17","source_stats":source_stats,"external_valuations":external,"web_candidates":web_candidates,"web_status":web_status,"connections":connection_status(),"subject":subject,"items":items,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"Türkiye geneli bağımsız gayrimenkul araştırması. Emlak Cafe ilan bağlantısı isteğe bağlıdır. İnternet arama adayları aktiflik ve konum doğrulanmadan emsal sayılmaz. Mesafe parsel merkezleri arasındadır. Fiyatlar gerçekleşen satış değil, ilan talep fiyatlarıdır."}
 
 @app.get("/api/test/akkoy")
 async def test_akkoy():
-    key="test:akkoy:v16"
+    key="test:akkoy:v17"
     old=cache.get(key)
     if old and time.monotonic()-old[0]<300:return old[1]
     result=await analyze(Req(province="Yalova",district="Termal",place="Akköy",block="354",parcel="12",zoning="unknown"))

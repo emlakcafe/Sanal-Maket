@@ -7,7 +7,7 @@ import httpx
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 app=FastAPI(title="Emlak Cafe AI mobil test")
 ADDR="https://api.turkiyeapi.dev/v2"
@@ -53,7 +53,7 @@ async def all_addresses(c,path):
 @app.get("/",response_class=HTMLResponse)
 async def home():return Path(__file__).with_name("index.html").read_text(encoding="utf-8")
 @app.get("/health")
-async def health():return {"status":"ok","version":"v10","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"dated_research":"Akköy"}
+async def health():return {"status":"ok","version":"v11","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"dated_research":"Akköy"}
 @app.get("/api/provinces")
 async def provinces():return sorted([{"id":i+1,"name":n} for i,n in enumerate(names)],key=lambda x:norm(x["name"]))
 @app.get("/api/districts/{province_id}")
@@ -70,11 +70,22 @@ async def places(district_id:int):
             n,v=await asyncio.gather(all_addresses(c,f"/districts/{district_id}/neighborhoods"),all_addresses(c,f"/districts/{district_id}/villages"))
         return sorted([dict(x,kind="mahalle") for x in n]+[dict(x,kind="köy") for x in v],key=lambda x:norm(x["name"]))
     except Exception:raise HTTPException(503,"Mahalle/köy servisine erişilemedi. Yeniden deneyin.")
+def normalize_block(value):
+    if value is None:return "0"
+    value=str(value).strip()
+    if value in {"", "-"}:return "0"
+    if not re.fullmatch(r"[0-9]{1,9}",value):raise ValueError("Ada numarası geçersiz")
+    return str(int(value))
 class Req(BaseModel):
     province:str=Field(min_length=1,max_length=80)
     district:str=Field(min_length=1,max_length=80)
     place:str=Field(min_length=1,max_length=120)
-    block:str=Field(pattern=r"^\d{1,9}$")
+    block:str=Field(default="0",pattern=r"^[0-9]{1,9}$")
+    @field_validator("block",mode="before")
+    @classmethod
+    def clean_block(cls,value):
+        if value == "-":raise ValueError("Ada numarası boş veya sayısal olmalıdır")
+        return normalize_block(value)
     parcel:str=Field(pattern=r"^[1-9]\d{0,8}$")
     zoning:str=Field(default="unknown",pattern=r"^(unknown|residential|field)$")
 def properties(data):
@@ -99,13 +110,14 @@ def center(g):
     return [(min(y for x,y in pts)+max(y for x,y in pts))/2,(min(x for x,y in pts)+max(x for x,y in pts))/2]
 async def parcel_data(c,loc,block,parcel):
     if not str(loc).isdigit():raise ValueError("TKGM adres kimliği geçersiz")
+    block=normalize_block(block)
     j=await getjson(c,TKGM+f"/parsel/{loc}/{int(block)}/{int(parcel)}",900)
     if j.get("type")=="FeatureCollection":
         fs=j.get("features",[])
         if len(fs)!=1:raise ValueError("Tekil parsel bulunamadı")
         j=fs[0]
     p=j.get("properties") or {};g=j.get("geometry") or {}
-    if str(p.get("adaNo",block))!=str(int(block)) or str(p.get("parselNo",parcel))!=str(int(parcel)):raise ValueError("Ada/parsel yanıtı uyuşmuyor")
+    if normalize_block(p.get("adaNo",block))!=block or str(p.get("parselNo",parcel))!=str(int(parcel)):raise ValueError("Ada/parsel yanıtı uyuşmuyor")
     return {"block":block,"parcel":parcel,"area":num(p.get("alan")),"nature":p.get("nitelik"),"geometry":g,"center":center(g),"source":"TKGM MEGSİS"}
 def distance(a,b):
     la,lb=map(math.radians,[a[0],b[0]])

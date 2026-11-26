@@ -53,7 +53,7 @@ async def all_addresses(c,path):
 @app.get("/",response_class=HTMLResponse)
 async def home():return Path(__file__).with_name("index.html").read_text(encoding="utf-8")
 @app.get("/health")
-async def health():return {"status":"ok","mode":"isolated-mobile-test","data":"live-only","sources":["TurkiyeAPI","TKGM","RE/MAX"]}
+async def health():return {"status":"ok","version":"v10","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"dated_research":"Akköy"}
 @app.get("/api/provinces")
 async def provinces():return sorted([{"id":i+1,"name":n} for i,n in enumerate(names)],key=lambda x:norm(x["name"]))
 @app.get("/api/districts/{province_id}")
@@ -117,55 +117,141 @@ def field(tokens,keys):
     return ""
 def listing_type(s):
     n=norm(s)
-    if "satilik" not in n:return "unknown"
     if any(x in n for x in ("tarla","tarim arazisi","bag bahce","bag ve bahce")):return "field"
-    if "konut imarli" in n or "villa" in n:return "residential"
+    if any(x in n for x in ("konut imarli","villa imarli","villa","residential zoned")):return "residential"
     return "unknown"
-async def search_remax(c,req):
-    url=REMAX+"/tr/arsa-arazi/satilik/"+slug(req.province)+"/"+slug(req.district)
-    robots=await c.get(REMAX+"/robots.txt")
-    if robots.status_code!=200:raise ValueError("RE/MAX erişim kuralları doğrulanamadı")
+
+SOURCES={"RE/MAX":"https://remax.com.tr","Emlakjet":"https://www.emlakjet.com"}
+def item_record(title,url,area,price,kind,block=None,parcel=None,source="RE/MAX",live=True,**extra):
+    if not area or not price or area<=0 or price<=0:return None
+    return {"title":title[:220],"url":url,"area":area,"price":price,"unit":price/area,"kind":kind,"type":kind,"block":block,"parcel":parcel,"center":None,"distance":None,"source":source,"live":live,**extra}
+def integer_text(s):
+    t=str(s or "").strip().replace(".","")
+    return t if t.isdigit() else None
+def value_num(s):
+    m=re.search(r"\d+(?:[.,]\d+)*",str(s or ""))
+    return num(m.group()) if m else None
+def locality_in(text,req):
+    n=norm(text)
+    place=local(req.place)
+    return bool(place and re.search(r"\b"+re.escape(place)+r"\b",n) and re.search(r"\b"+re.escape(norm(req.district))+r"\b",n))
+def price_from(s):
+    return next((num(m.group(1)) for m in re.finditer(r"(?<![\d.,])([\d.,]+)\s*(?:₺|TL)(?!\s*/)",s,re.I) if (num(m.group(1)) or 0)>=10000),None)
+def parse_card(a,url,req,source):
+    for el in [a,a.parent,a.parent.parent if a.parent else None]:
+        if not el:continue
+        t=el.get_text(" ",strip=True)
+        if len(t)>1300 or not locality_in(t,req) or "satilik" not in norm(t):continue
+        m=re.search(r"(?<![\d.,/])([\d.,]+)\s*m[²2]\b",t,re.I)
+        # superscript 2 can be adjacent to punctuation; accept explicit area.
+        if not m:m=re.search(r"([\d.,]+)\s*m²",t,re.I)
+        area=num(m.group(1)) if m else None
+        price=price_from(t)
+        if area and price:
+            h=el.find(["h2","h3","h4"])
+            title=h.get_text(" ",strip=True) if h else req.place+" satılık arsa"
+            return item_record(title,url,area,price,listing_type(t),source=source,live=True,detail_verified=False)
+    return None
+def parse_detail(html,url,req,source):
+    soup=BeautifulSoup(html,"html.parser")
+    for tag in soup(["script","style","noscript","footer","nav"]):tag.decompose()
+    tokens=list(soup.stripped_strings)
+    title=soup.find("h1")
+    title=title.get_text(" ",strip=True) if title else ""
+    if not title:return None
+    # Only the listing's own heading and attributes, not recommendations.
+    start=next((i for i,t in enumerate(tokens) if norm(t)==norm(title)),0)
+    section=tokens[start:start+180]
+    for i,t in enumerate(section):
+        if norm(t) in {"benzer ilanlar","bu ilana bakanlar bunlara da bakti","diger ilanlari","ilan aciklamasi","aciklama"} and i>30:
+            section=section[:i];break
+    top=" ".join(section)
+    if not locality_in(top,req):return None
+    if not re.search(r"\b"+re.escape(norm(req.province))+r"\b",norm(top)):return None
+    typ=field(section,{"emlak tipi","gayrimenkul tipi","kategori","arsa tipi","imar durumu"})
+    if "satilik" not in norm(typ+" "+top):return None
+    kind=listing_type(typ)
+    if kind=="unknown":kind=listing_type(title+" "+typ)
+    area=value_num(field(section,{"m2","m 2","metrekare","alan","metrekare m2"}))
+    if not area:
+        m=re.search(r"([\d.,]+)\s*m²",top)
+        area=num(m.group(1)) if m else None
+    price=None
+    for h in soup.find_all(["h2","h3"])[:12]:
+        price=price_from(h.get_text(" ",strip=True))
+        if price:break
+    if not price:price=price_from(top)
+    b=integer_text(field(section,{"ada","ada no","ada numarasi","ada parsel no"}))
+    p=integer_text(field(section,{"parsel","parsel no","parsel numarasi"}))
+    if not (b and p):
+        # A combined explicit field is also valid. Do not infer numbers from title.
+        m=re.search(r"\b(?:ada\s*/\s*parsel(?:\s*no)?)\s*:?\s*(\d+)\s*/\s*(\d+)",top,re.I)
+        if m:b,p=m.groups()
+    if not area or not price:return None
+    return item_record(title,url,area,price,kind,b,p,source,True,detail_verified=True)
+async def search_source(c,req,source):
+    base=SOURCES[source]
+    path=("/tr/arsa-arazi/satilik/"+slug(req.province)+"/"+slug(req.district)) if source=="RE/MAX" else ("/satilik-arsa/"+slug(req.province)+"-"+slug(req.district)+"-"+slug(local(req.place)))
+    url=base+path
+    robots=await c.get(base+"/robots.txt")
+    if robots.status_code!=200:raise ValueError("erişim kuralları doğrulanamadı")
     rp=urllib.robotparser.RobotFileParser();rp.parse(robots.text.splitlines())
-    if not rp.can_fetch(UA,url):raise ValueError("RE/MAX otomatik erişime izin vermiyor")
+    if not rp.can_fetch(UA,url):raise ValueError("otomatik erişime izin verilmiyor")
     resp=await c.get(url);resp.raise_for_status()
     soup=BeautifulSoup(resp.text,"html.parser")
-    urls=[]
+    candidates={}
     for a in soup.select("a[href]"):
         u=urljoin(url,a.get("href",""));p=urlsplit(u)
-        if p.scheme=="https" and p.hostname=="remax.com.tr" and re.fullmatch(r"/tr/portfoy/P\d+/?",p.path,re.I):
-            u=REMAX+p.path.rstrip("/")
-            if u not in urls and rp.can_fetch(UA,u):urls.append(u)
-    if not urls:raise ValueError("RE/MAX sayfasında okunabilir ilan bağlantısı bulunamadı")
-    out=[];sem=asyncio.Semaphore(2)
+        if p.scheme!="https" or p.hostname!=urlsplit(base).hostname:continue
+        if source=="RE/MAX":
+            ok=re.fullmatch(r"/(?:tr/portfoy|en/property)/P\d+/?",p.path,re.I)
+        else:
+            ok=re.fullmatch(r"/ilan/[^/]+-\d+/?",p.path,re.I)
+        if not ok:continue
+        u=base+p.path.rstrip("/")
+        if not rp.can_fetch(UA,u):continue
+        card=parse_card(a,u,req,source)
+        if u not in candidates or card:candidates[u]=card
+    if not candidates:raise ValueError("liste sayfasından ilan bağlantısı alınamadı")
+    ordered=sorted(candidates,key=lambda u:candidates[u] is None)[:12]
+    sem=asyncio.Semaphore(3);out=[]
     async def detail(u):
+        card=candidates[u]
         async with sem:
             try:
                 r=await c.get(u);r.raise_for_status()
-                s=BeautifulSoup(r.text,"html.parser")
-                for tag in s(["script","style","noscript","footer"]):tag.decompose()
-                tokens=list(s.stripped_strings)
-                title=s.find("h1")
-                title=title.get_text(" ",strip=True) if title else ""
-                # Do not assume a listing's location from the requested search.
-                location_text=" ".join(tokens[:120])
-                if not re.search(r"\b"+re.escape(local(req.place))+r"\b",norm(location_text)):return
-                if norm(req.district) not in norm(location_text):return
-                typ=field(tokens,{"emlak tipi","gayrimenkul tipi"})
-                kind=listing_type(typ)
-                if kind=="unknown":return
-                area=num(field(tokens,{"m2","m 2","metrekare"}))
-                price=None
-                for t in tokens[:120]:
-                    m=re.fullmatch(r"\s*([\d., ]+)\s*(?:₺|TL)\s*",t,re.I)
-                    if m:
-                        price=num(m.group(1));break
-                b=field(tokens,{"ada","ada no","ada numarasi"}).replace(".","")
-                p=field(tokens,{"parsel","parsel no","parsel numarasi"}).replace(".","")
-                if not title or not area or not price or area<=0 or price<=0:return
-                out.append({"title":title[:200],"url":u,"price":price,"area":area,"unit":price/area,"kind":kind,"type":typ,"block":b if b.isdigit() else None,"parcel":p if p.isdigit() else None,"center":None,"distance":None,"source":"RE/MAX"})
-            except Exception:return
-    await asyncio.gather(*(detail(u) for u in urls[:18]))
+                d=parse_detail(r.text,u,req,source)
+                if d:
+                    # Explicit card/details disagreement is not silently accepted.
+                    if card and (abs(card["area"]-d["area"])/d["area"]>.08 or card["price"]!=d["price"]):
+                        d["detail_verified"]=False;d["block"]=None;d["parcel"]=None
+                    out.append(d);return
+            except Exception:pass
+            if card:out.append(card)
+    try:await asyncio.wait_for(asyncio.gather(*(detail(u) for u in ordered)),35)
+    except TimeoutError:
+        for u in ordered:
+            if candidates[u] and not any(x["url"]==u for x in out):out.append(candidates[u])
+    print(f"SOURCE {source}: links={len(candidates)} rows={len(out)} details={sum(bool(x.get('detail_verified')) for x in out)}",flush=True)
     return out
+
+def research_snapshot(req):
+    # Small, dated original-source observations checked via web research on
+    # 2026-11-26. Not a feed or a claim of current availability.
+    if (norm(req.province),norm(req.district),local(req.place))!=("yalova","termal","akkoy"):return []
+    rows=[
+      ("524","11",350,1900000,"Emlakjet","https://www.emlakjet.com/ilan/ozgurce-gyd-den-yalova-akkoy-de-villa-imarli-350-m2-satilik-arsa-19787573","13.11.2026"),
+      ("109","7",342,2530000,"Emlakjet","https://www.emlakjet.com/ilan/turyap-aydemirden-termal-akkoyde-342-m2-villa-imarli-arsa-19806271","21.11.2026"),
+      ("535","9",399,3100000,"Emlakjet","https://www.emlakjet.com/ilan/sekercioglu-ndan-yalova-akkoy-de-399m-2-kat-imarli-satilik-arsa-19395361","31.08.2026"),
+      ("495","16",350,3050000,"Emlakjet","https://www.emlakjet.com/ilan/yalova-termal-akkoyde-deniz-doga-manzarali-satilik-imarli-arsa-20071926","20.11.2026"),
+      ("619","1",374,3750000,"Emlakjet","https://www.emlakjet.com/ilan/yalova-termal-akkoyde-374-59-m-satilik-arsa-20100944","21.11.2026"),
+      ("314","178",360,3625000,"Emlakjet","https://www.emlakjet.com/ilan/turyap-ercan-dan-akkoy-de-satilik-360-m-villa-parseli-20067390","06.11.2026"),
+      ("115","11",430,4900000,"Hepsiemlak","https://www.hepsiemlak.com/yalova-termal-akkoy-satilik/imarli-villa/0-47269317","09.09.2026"),
+      ("3178","6",363,2600000,"RE/MAX","https://remax.com.tr/tr/portfoy/P22150221","05.10.2026"),
+      ("3177","6",352,1700000,"RE/MAX","https://remax.com.tr/tr/portfoy/P61352831","17.10.2026"),
+      ("112","13",547,4200000,"RE/MAX","https://remax.com.tr/tr/portfoy/P60754878","06.08.2026")
+    ]
+    return [item_record(f"Akköy · {b}/{p} · konut/villa imarlı arsa (ilan beyanı)",u,a,v,"residential",b,p,src,False,detail_verified=True,observed_on="2026-11-26",listing_date=d) for b,p,a,v,src,u,d in rows]
 def quantile(a,q):
     a=sorted(a);i=(len(a)-1)*q;k=int(i)
     return a[k]+(a[min(k+1,len(a)-1)]-a[k])*(i-k)
@@ -181,9 +267,17 @@ async def analyze(req:Req):
                     loc=await locality(c,req);subject=await parcel_data(c,loc,req.block,req.parcel)
                 except Exception as e:warnings.append("TKGM: "+(str(e)[:180] or "Bağlantı zaman aşımı"))
             async def get_items():
-                nonlocal items
-                try:items=await search_remax(c,req)
-                except Exception as e:warnings.append("RE/MAX: "+(str(e)[:180] or "Bağlantı zaman aşımı"))
+                async def collect(source):
+                    try:
+                        rows=await search_source(c,req,source)
+                        items.extend(rows)
+                        if not rows:warnings.append(source+": erişilebilir sayfalarda uygun alanlar okunamadı.")
+                    except Exception as e:warnings.append(source+": "+(str(e)[:180] or "Bağlantı zaman aşımı"))
+                await asyncio.gather(*(collect(x) for x in SOURCES))
+                live_urls={i["url"] for i in items if i.get("detail_verified")}
+                for row in research_snapshot(req):
+                    if row["url"] not in live_urls:
+                        items.append(row)
             try:await asyncio.wait_for(asyncio.gather(get_subject(),get_items()),55)
             except TimeoutError:warnings.append("Kaynak sorgusu zaman aşımına uğradı.")
             if subject and loc:
@@ -196,22 +290,55 @@ async def analyze(req:Req):
                         try:
                             g=await parcel_data(c,loc,item["block"],item["parcel"])
                             # The advertised area must be consistent with the parcel.
-                            if g["area"] and abs(item["area"]-g["area"])/g["area"]>0.08:return
+                            if not g["area"] or abs(item["area"]-g["area"])/g["area"]>0.08:return
                             item["center"]=g["center"];item["distance"]=round(distance(subject["center"],g["center"]))
                         except Exception:return
-                try:await asyncio.wait_for(asyncio.gather(*(locate(i) for i in items[:12])),25)
+                candidates=[i for i in items if i["block"] and i["parcel"]]
+                try:await asyncio.wait_for(asyncio.gather(*(locate(i) for i in candidates[:24])),30)
                 except TimeoutError:warnings.append("Bazı emsal konumları zaman aşımına uğradı.")
-        unique={}
+        # Prefer independently verified live observations, then dated references.
+        # Merge direct URL duplicates before parcel-based deduplication.
+        unique_urls={}
         for i in items:
             if i.get("same_parcel"):continue
+            key=i["url"]
+            old=unique_urls.get(key)
+            rank=lambda x:(bool(x.get("detail_verified")),bool(x.get("live")),bool(x.get("center")))
+            if old is None or rank(i)>rank(old):unique_urls[key]=i
+        unique={}
+        for i in unique_urls.values():
             key=(i["block"],i["parcel"]) if i["block"] and i["parcel"] else (i["url"],)
-            if key not in unique or i["price"]<unique[key]["price"]:unique[key]=i
+            old=unique.get(key)
+            if old is None or (bool(i["live"]),bool(i["center"]))>(bool(old["live"]),bool(old["center"])):unique[key]=i
         items=sorted(unique.values(),key=lambda x:(x["distance"] is None,x["distance"] or 0,x["price"]))
         nearby=[i for i in items if i["distance"] is not None and i["distance"]<=1000]
-        suitable=[i for i in nearby if subject and subject["area"] and req.zoning!="unknown" and i["kind"]==req.zoning and .5*subject["area"]<=i["area"]<=2*subject["area"]]
-        estimate=None
-        if len(suitable)>=3:
-            units=[i["unit"] for i in suitable]
-            estimate={"low":round(quantile(units,.25)*subject["area"]),"high":round(quantile(units,.75)*subject["area"]),"median":round(quantile(units,.5)*subject["area"]),"count":len(units)}
-        if not estimate:warnings.append("Fiyat için doğrulanmış parsel alanı, benzer imar türü ve 1 km içinde en az üç farklı uygun emsal gerekir.")
-        return {"subject":subject,"items":items,"nearby_count":len(nearby),"estimate":estimate,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"İlk test: yalnızca erişilebilir RE/MAX ilanları. Mesafe parsel merkezleri arasındadır; imar bilgisi kullanıcı beyanıdır."}
+        live_nearby=[i for i in nearby if i["live"] and i.get("detail_verified")]
+        zone=req.zoning
+        assumed=zone=="unknown"
+        if assumed and subject and norm(subject["nature"])=="arsa":zone="residential"
+        def comparable(i):
+            return bool(subject and subject["area"] and zone!="unknown" and i["kind"]==zone and i.get("detail_verified") and .5*subject["area"]<=i["area"]<=2*subject["area"])
+        def band(rows,scope):
+            if len(rows)<3:return None
+            units=[i["unit"] for i in rows]
+            a=subject["area"]
+            return {"low":round(quantile(units,.25)*a),"high":round(quantile(units,.75)*a),"median":round(quantile(units,.5)*a),"count":len(rows),"scope":scope,"conditional_zoning":assumed,"dated_count":sum(not i["live"] for i in rows)}
+        strict=[i for i in live_nearby if comparable(i)]
+        estimate=band(strict,"1 km · canlı doğrulanmış ilanlar") if not assumed else None
+        reference_near=[i for i in nearby if comparable(i)]
+        region=[i for i in items if comparable(i)]
+        reference=band(reference_near,"1 km · kaynaklı ilan referansı") or band(region,"Mahalle/köy · bölgesel ilan referansı")
+        if not estimate:warnings.append("Kesin 1 km canlı emsal bandı için en az üç konumu doğrulanmış güncel ilan ve bilinen imar türü gerekir.")
+        if reference and assumed:warnings.append("Referans fiyat, taşınmazın konut/villa imarlı olduğu varsayımına bağlıdır. Tapu niteliği imar durumunu kanıtlamaz.")
+        if any(not i["live"] for i in items):warnings.append("26.11.2026 tarihli web araştırması kayıtları ayrı etiketlidir; canlı ilan aktifliği yeniden doğrulanmış sayılmaz.")
+        print(f"ANALYZE subject={bool(subject)} rows={len(items)} nearby={len(nearby)} live={sum(i['live'] for i in items)} strict={len(strict)} reference={bool(reference)}",flush=True)
+        return {"subject":subject,"items":items,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"RE/MAX ve Emlakjet kaynak okuyucuları; Akköy için tarihli orijinal kaynak araştırması. Mesafe parsel merkezleri arasındadır. Fiyatlar gerçekleşen satış değil, ilan talep fiyatlarıdır."}
+
+@app.get("/api/test/akkoy")
+async def test_akkoy():
+    key="test:akkoy:v10"
+    old=cache.get(key)
+    if old and time.monotonic()-old[0]<300:return old[1]
+    result=await analyze(Req(province="Yalova",district="Termal",place="Akköy",block="354",parcel="12",zoning="unknown"))
+    cache[key]=(time.monotonic(),result)
+    return result

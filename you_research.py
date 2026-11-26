@@ -23,7 +23,7 @@ class Session:
     def __init__(self,client):
         self.client=client
         self.session=None
-        self.version="2025-03-26"
+        self.version="2026-07-28"
         self.n=0
     async def rpc(self,method,params=None,notification=False):
         global BACKOFF
@@ -31,9 +31,13 @@ class Session:
         self.n+=1
         request={"jsonrpc":"2.0","method":method}
         if not notification:request["id"]=self.n
-        if params is not None:request["params"]=params
-        headers={"Content-Type":"application/json","Accept":"application/json, text/event-stream","MCP-Protocol-Version":self.version}
-        if self.session:headers["Mcp-Session-Id"]=self.session
+        params=dict(params or {})
+        params["_meta"]={"io.modelcontextprotocol/protocolVersion":self.version,"io.modelcontextprotocol/clientInfo":{"name":"EmlakCafeResearch","version":"1.0"},"io.modelcontextprotocol/clientCapabilities":{}}
+        if method=="tools/call" and params.get("name")=="you-search":
+            params["_meta"]["com.you.com/search"]={"country":"TR"}
+        request["params"]=params
+        headers={"Content-Type":"application/json","Accept":"application/json, text/event-stream","MCP-Protocol-Version":self.version,"Mcp-Method":method}
+        if method=="tools/call":headers["Mcp-Name"]=params["name"]
         async with self.client.stream("POST",URL,json=request,headers=headers,timeout=12,follow_redirects=False) as response:
             if response.status_code==429:
                 try:seconds=max(60,min(86400,int(response.headers.get("Retry-After","600"))))
@@ -84,9 +88,6 @@ class Session:
             raise MCPError("tool_error")
         return result
     async def start(self):
-        result=await self.rpc("initialize",{"protocolVersion":self.version,"capabilities":{},"clientInfo":{"name":"EmlakCafeResearch","version":"1.0"}})
-        self.version=result.get("protocolVersion",self.version)
-        await self.rpc("notifications/initialized",notification=True)
         tools=await self.rpc("tools/list",{})
         return {t["name"]:t.get("inputSchema",{}).get("properties",{}) for t in tools.get("tools",[]) if isinstance(t,dict) and "name" in t}
     async def call(self,name,args):
@@ -95,7 +96,7 @@ class Session:
 def documents(result):
     """Read structuredContent or JSON text MCP content blocks."""
     data=[]
-    if isinstance(result.get("structuredContent"),(dict,list)):data.append(result["structuredContent"])
+    if isinstance(result.get("structuredContent"),(dict,list)):return [result["structuredContent"]]
     for block in result.get("content",[]):
         if not isinstance(block,dict) or block.get("type")!="text":continue
         raw=block.get("text","")
@@ -161,7 +162,7 @@ async def search(client,req,norm,local,max_queries=2,extract_limit=4):
     if not enabled():return [],status
     location=f"{req.province} {req.district} {req.place}"
     kind="satılık tarla" if req.zoning=="field" else "satılık arsa tarla"
-    queries=[f"{location} {kind} ilan fiyatı metrekare",f"{location} {kind} emlakjet hepsiemlak sahibinden remax"]
+    queries=[f"{location} {kind} fiyat m²",f"{location} {kind} güncel ilanlar"]
     found={};errors=[];success=0;raw_count=0
     async with LOCK:
         try:
@@ -186,9 +187,15 @@ async def search(client,req,norm,local,max_queries=2,extract_limit=4):
                 targets=sorted((i for i in found.values() if not i["risky"]),key=lambda i:(i["price"] is None,i["area"] is None))[:extract_limit]
                 # Only the official single-URL extract tool; no direct scraping.
                 for item in targets:
-                    raw=await session.call("you-extract",{"url":item["url"]})
-                    body=extract_text(raw,item["url"])
-                    if body:evidence.read_detail(item,body,req,norm,local)
+                    try:
+                        raw=await session.call("you-extract",{"url":item["url"]})
+                        body=extract_text(raw,item["url"])
+                        if body:evidence.read_detail(item,body,req,norm,local)
+                    except MCPError as ex:
+                        errors.append(str(ex))
+                        if str(ex) in ("rate_limited","access_denied"):break
+                    except asyncio.CancelledError:raise
+                    except Exception:errors.append("extract_error")
         except MCPError as e:errors.append(str(e))
         except asyncio.CancelledError:raise
         except Exception:errors.append("connection_or_parse_error")

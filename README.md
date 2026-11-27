@@ -7,6 +7,60 @@ This branch runs the isolated Python preview at https://emlak-cafe-ai-mobil-test
 Install `requirements.txt`, then run `uvicorn server:app --host 0.0.0.0 --port 8000`.
 Run regression checks with `python -m unittest discover -s tests -v`.
 
+## On-demand research agents (V10.5)
+
+The main form now starts a real server job using `POST /api/agent-runs` and polls
+`GET /api/agent-runs/{job_id}`. Six rules-and-tools agents run the parcel lookup,
+web discovery, RE/MAX reads, Emlakjet reads, cadastral matching and valuation.
+Their status and counts are updated by the executing operations; the UI does
+not simulate progress or describe these tasks as six language models. They run
+when a query is requested, not continuously in the background.
+
+Public-index discovery uses Exa's documented keyless MCP trial at
+`https://mcp.exa.ai/mcp`. It calls only `web_search_exa`, with up to three queries,
+a 36-second deadline and a five-minute parcel-bound cache. The query objective
+uses the server's TKGM area, nature and coordinates when available. There is no API key,
+personal account, paid registration or `agent_run` call. Exa is explicitly named
+as the search provider. Google AI remains the separate optional integration
+described below; Exa results are never called Google results.
+
+Search records are filtered for local land-listing evidence and safe public
+links. The reader receives only approved RE/MAX and Emlakjet detail URLs from
+discovery; it obtains price, area and address independently from the actual
+permitted page. Unsupported-source results remain labelled index candidates,
+without verified activity, distance or a place on the parcel map. A category
+page is not assigned an individual listing's price. Built apartments/villas and
+construction areas are not land comparables. Source records are not necessarily
+unique properties; verified duplicates are merged by cadastral identity.
+
+There is no direct Sahibinden request in this workflow. An absent Sahibinden
+index result does not imply the area has no Sahibinden listings. Free trial
+availability and coverage are limited; a 403/429 stops the search rather than
+retrying or changing identity, while other permitted readers can finish.
+
+The job runtime permits two concurrent jobs, retains at most 32 jobs for fifteen
+minutes in process memory, and enforces a 140-second total deadline. Restarting
+the service discards jobs. All job endpoints send `Cache-Control: no-store`.
+The old `/api/analyze` endpoint remains compatible with earlier clients.
+
+The map distinguishes the count of nearby listings from the number eligible
+for a price calculation. Every listing includes its acceptance/exclusion reason.
+Unknown zoning remains a condition on any reference range, and insufficient
+comparables never produce an invented estimate.
+
+When an advertised postal locality is absent from the cadastral catalogue, a
+narrow alternative match can be considered only if the listing itself names
+the selected cadastral locality, supplies a nearby map pin and is a current
+detail read with no share/multiple-parcel flags. The official block/parcel must
+agree within 2% in area and within 150 metres of the advertised pin. The original
+postal address is preserved, and the qualified matching method and pin difference
+are shown. This does not assert an official equivalence between locality names
+or that the advertised pin lies inside the parcel.
+
+UI checks: `node tests/test_agent_ui.js`.
+
+Official search access reference: https://exa.ai/docs/get-started/exa-mcp
+
 ## Listing readers
 
 `listing_readers.py` contains separate, deterministic readers for the two current live sources:

@@ -37,7 +37,16 @@ def num(s):
 async def getjson(client,url,ttl=3600):
     old=cache.get(url)
     if old and time.monotonic()-old[0]<ttl:return old[1]
-    r=await client.get(url);r.raise_for_status();v=r.json()
+    # One bounded retry for transient transport/service failures. Access
+    # restrictions (403/429) and missing parcels (404) are never retried.
+    for attempt in range(2):
+        try:
+            r=await client.get(url);r.raise_for_status();v=r.json();break
+        except httpx.HTTPStatusError as e:
+            if attempt or e.response.status_code not in {408,500,502,503,504}:raise
+        except (httpx.TimeoutException,httpx.NetworkError):
+            if attempt:raise
+        await asyncio.sleep(.25)
     if len(cache)>3000:cache.clear()
     cache[url]=(time.monotonic(),v)
     return v
@@ -316,14 +325,22 @@ async def analyze(req:Req):
                             item["location_note"]="İlan adresi ve TKGM parseli eşleştirildi"
                         except ValueError as e:
                             item["location_note"]="İlandaki mahalle/köy adı TKGM kadastro listesiyle eşleşmedi" if "TKGM adresi" in str(e) else "İlanın kendi adresinde ada/parsel doğrulanamadı"
+                        except httpx.TimeoutException:
+                            item["location_note"]="TKGM yanıtı zaman aşımına uğradı; konum doğrulanamadı"
+                        except httpx.HTTPStatusError as e:
+                            item["location_note"]=f"TKGM parsel yanıtı alınamadı (HTTP {e.response.status_code})"
+                        except httpx.RequestError:
+                            item["location_note"]="TKGM bağlantısı tamamlanamadı; konum doğrulanamadı"
                         except Exception:
                             item["location_note"]="İlanın kendi adresinde ada/parsel doğrulanamadı"
                 def location_priority(item):
                     pin=item.get("advertised_center")
                     if isinstance(pin,list) and len(pin)==2 and all(isinstance(v,(int,float)) and math.isfinite(v) for v in pin):
-                        return (0,distance(subject["center"],pin))
-                    return (1,local((item.get("address") or {}).get("place"))!=local(req.place))
+                        rough=distance(subject["center"],pin)
+                        return (0 if rough<=SEARCH_RADIUS_METERS*1.5 else 2,rough)
+                    return (1 if local((item.get("address") or {}).get("place"))==local(req.place) else 3,0)
                 candidates=sorted([i for i in items if i["block"] and i["parcel"]],key=location_priority)
+                for item in candidates[50:]:item["location_note"]="Bu sorgunun konum doğrulama sınırına ulaşıldı"
                 try:await asyncio.wait_for(asyncio.gather(*(locate(i) for i in candidates[:50])),30)
                 except TimeoutError:warnings.append("Bazı emsal konumları zaman aşımına uğradı.")
         # Prefer independently verified live observations, then dated references.

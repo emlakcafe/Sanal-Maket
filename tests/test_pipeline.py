@@ -42,6 +42,46 @@ class ResearchPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.cache_patch.start()
         self.addCleanup(self.cache_patch.stop)
 
+    async def test_json_retry_is_bounded_and_never_caches_failures(self):
+        cases = [
+            ("transient-503", [503, 200], False, 2),
+            ("transient-timeout", ["timeout", 200], False, 2),
+            ("forbidden", [403, 200], True, 1),
+            ("rate-limited", [429, 200], True, 1),
+            ("missing", [404, 200], True, 1),
+            ("repeated-503", [503, 503, 200], True, 2),
+        ]
+        for name, responses, initially_fails, initial_calls in cases:
+            with self.subTest(case=name):
+                url = server.TKGM + "/test-fixture/" + name
+                calls = []
+                payload = {"fixture": name, "recovered": True}
+
+                async def handler(request):
+                    calls.append(str(request.url))
+                    outcome = responses[len(calls) - 1]
+                    if outcome == "timeout":
+                        raise httpx.ReadTimeout("Simulated transient timeout", request=request)
+                    return httpx.Response(outcome, json=payload if outcome == 200 else {"error": "fixture"})
+
+                async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+                    if initially_fails:
+                        with self.assertRaises(httpx.HTTPStatusError):
+                            await server.getjson(client, url)
+                        self.assertEqual(len(calls), initial_calls)
+                        self.assertNotIn(url, server.cache)
+                        # A separate caller may retry later; the prior error is
+                        # neither cached nor turned into a successful response.
+                        self.assertEqual(await server.getjson(client, url), payload)
+                        successful_calls = initial_calls + 1
+                    else:
+                        self.assertEqual(await server.getjson(client, url), payload)
+                        successful_calls = initial_calls
+                    self.assertEqual(len(calls), successful_calls)
+                    self.assertEqual(server.cache[url][1], payload)
+                    self.assertEqual(await server.getjson(client, url), payload)
+                    self.assertEqual(len(calls), successful_calls)
+
     async def test_outer_timeout_preserves_completed_rows_and_source_status(self):
         detail_read = asyncio.Event()
         never_finishes = asyncio.Event()

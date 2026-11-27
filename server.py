@@ -53,7 +53,7 @@ async def all_addresses(c,path):
 @app.get("/",response_class=HTMLResponse)
 async def home():return Path(__file__).with_name("index.html").read_text(encoding="utf-8")
 @app.get("/health")
-async def health():return {"status":"ok","version":"v10","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"dated_research":"Akköy"}
+async def health():return {"status":"ok","version":"v10.1","mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"dated_research":"Akköy"}
 @app.get("/api/provinces")
 async def provinces():return sorted([{"id":i+1,"name":n} for i,n in enumerate(names)],key=lambda x:norm(x["name"]))
 @app.get("/api/districts/{province_id}")
@@ -311,7 +311,7 @@ async def analyze(req:Req):
             old=unique.get(key)
             if old is None or (bool(i["live"]),bool(i["center"]))>(bool(old["live"]),bool(old["center"])):unique[key]=i
         items=sorted(unique.values(),key=lambda x:(x["distance"] is None,x["distance"] or 0,x["price"]))
-        nearby=[i for i in items if i["distance"] is not None and i["distance"]<=1000]
+        nearby=[i for i in items if i["distance"] is not None and i["distance"]<=2000]
         live_nearby=[i for i in nearby if i["live"] and i.get("detail_verified")]
         zone=req.zoning
         assumed=zone=="unknown"
@@ -324,11 +324,11 @@ async def analyze(req:Req):
             a=subject["area"]
             return {"low":round(quantile(units,.25)*a),"high":round(quantile(units,.75)*a),"median":round(quantile(units,.5)*a),"count":len(rows),"scope":scope,"conditional_zoning":assumed,"dated_count":sum(not i["live"] for i in rows)}
         strict=[i for i in live_nearby if comparable(i)]
-        estimate=band(strict,"1 km · canlı doğrulanmış ilanlar") if not assumed else None
+        estimate=band(strict,"2 km · canlı doğrulanmış ilanlar") if not assumed else None
         reference_near=[i for i in nearby if comparable(i)]
         region=[i for i in items if comparable(i)]
-        reference=band(reference_near,"1 km · kaynaklı ilan referansı") or band(region,"Mahalle/köy · bölgesel ilan referansı")
-        if not estimate:warnings.append("Kesin 1 km canlı emsal bandı için en az üç konumu doğrulanmış güncel ilan ve bilinen imar türü gerekir.")
+        reference=band(reference_near,"2 km · kaynaklı ilan referansı") or band(region,"Mahalle/köy · bölgesel ilan referansı")
+        if not estimate:warnings.append("Kesin 2 km canlı emsal bandı için en az üç konumu doğrulanmış güncel ilan ve bilinen imar türü gerekir.")
         if reference and assumed:warnings.append("Referans fiyat, taşınmazın konut/villa imarlı olduğu varsayımına bağlıdır. Tapu niteliği imar durumunu kanıtlamaz.")
         if any(not i["live"] for i in items):warnings.append("26.11.2026 tarihli web araştırması kayıtları ayrı etiketlidir; canlı ilan aktifliği yeniden doğrulanmış sayılmaz.")
         print(f"ANALYZE subject={bool(subject)} rows={len(items)} nearby={len(nearby)} live={sum(i['live'] for i in items)} strict={len(strict)} reference={bool(reference)}",flush=True)
@@ -336,7 +336,7 @@ async def analyze(req:Req):
 
 @app.get("/api/test/akkoy")
 async def test_akkoy():
-    key="test:akkoy:v10"
+    key="test:akkoy:v10.1"
     old=cache.get(key)
     if old and time.monotonic()-old[0]<300:return old[1]
     result=await analyze(Req(province="Yalova",district="Termal",place="Akköy",block="354",parcel="12",zoning="unknown"))

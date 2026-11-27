@@ -41,6 +41,9 @@ class ResearchPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.cache_patch = patch.dict(server.cache, {}, clear=True)
         self.cache_patch.start()
         self.addCleanup(self.cache_patch.stop)
+        self.refusal_patch = patch.dict(server.json_refusals, {}, clear=True)
+        self.refusal_patch.start()
+        self.addCleanup(self.refusal_patch.stop)
 
     async def test_json_retry_is_bounded_and_never_caches_failures(self):
         cases = [
@@ -70,8 +73,14 @@ class ResearchPipelineTests(unittest.IsolatedAsyncioTestCase):
                             await server.getjson(client, url)
                         self.assertEqual(len(calls), initial_calls)
                         self.assertNotIn(url, server.cache)
-                        # A separate caller may retry later; the prior error is
-                        # neither cached nor turned into a successful response.
+                        # Refusals suppress an immediate independent caller too.
+                        # Advance only the offline fixture's cooldown before
+                        # testing a subsequent successful response.
+                        if responses[0] in (403, 429):
+                            with self.assertRaises(httpx.HTTPStatusError):
+                                await server.getjson(client, url)
+                            self.assertEqual(len(calls), initial_calls)
+                            server.json_refusals[url] = (0, responses[0])
                         self.assertEqual(await server.getjson(client, url), payload)
                         successful_calls = initial_calls + 1
                     else:

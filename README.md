@@ -7,7 +7,35 @@ This branch runs the isolated Python preview at https://emlak-cafe-ai-mobil-test
 Install `requirements.txt`, then run `uvicorn server:app --host 0.0.0.0 --port 8000`.
 Run regression checks with `python -m unittest discover -s tests -v`.
 
-## On-demand research agents (V10.5)
+## Regional asking-price analysis (V10.6)
+
+The result now has a separate `regional_analysis` section. A TKGM refusal or an
+insufficient verified 1 km sample no longer hides every available price signal.
+Only records whose own listing evidence matches the selected province, district
+and locality enter this regional sample. Residential land and agricultural land
+remain separate. Shared sales, completed buildings, dated snapshots, ambiguous
+numeric observations and conflicting equal-quality duplicates are excluded.
+
+At least three eligible deduplicated observations in a group produce its observed
+minimum/maximum, median and middle-half (Q25–Q75) asking price per m². Each included
+record retains its source links and whether the evidence was a direct page read
+or an unverified search-index observation. The regional summary has **no 1 km
+distance claim** and is not evidence of a completed sale or a guaranteed buying
+price. It does not change the strict map/valuation eligibility rules.
+
+When the current query supplies a verified TKGM area, regional samples are limited
+to 0.5–2 times that area and can show a conditional area-scaled indication. Without
+that area, only unit prices are shown: the code never silently borrows a previous
+parcel size. Unknown zoning is disclosed and categories are never averaged together.
+
+Identical concurrent catalogue requests share one network operation. HTTP 403/429
+refusals are not retried; a cooldown of at least two minutes respects a longer
+`Retry-After`. User-facing source errors explain the limitation without raw request
+URLs or technical stack details. No alternate source route or account session is used.
+
+Additional UI checks: `node tests/test_regional_ui.js`.
+
+## On-demand research agents (V10.5 foundation)
 
 The main form now starts a real server job using `POST /api/agent-runs` and polls
 `GET /api/agent-runs/{job_id}`. Six rules-and-tools agents run the parcel lookup,
@@ -78,7 +106,7 @@ Only allowed public paths are requested with a transparent user agent. Redirects
 
 Each listing uses its own explicit address for TKGM resolution. Identical ada/parsel numbers in different localities remain distinct; cross-source duplicates retain their original links. A detail page must supply price and area, and its parcel area must agree with TKGM before its distance is accepted.
 
-Price ranges use only comparable parcels within 1 km, require at least three observations, and remain conditional when zoning is unknown. Asking prices are not completed-sale prices. A page read is not a guarantee that the property is unsold. Missing, conflicting or unreadable fields are displayed as such.
+The verified parcel price range uses only comparable parcels within 1 km, requires at least three observations, and remains conditional when zoning is unknown. The separately labelled regional summary described above can include same-locality observations outside 1 km or without verified distance. Asking prices are not completed-sale prices. A page read is not a guarantee that the property is unsold. Missing, conflicting or unreadable fields are displayed as such.
 
 The original dated Akköy observations remain explicitly labelled as research from 2026-11-26. They are not silently promoted to current listings.
 

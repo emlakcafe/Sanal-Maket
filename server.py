@@ -8,6 +8,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 import listing_readers
 import cadastral_match
+import regional_analysis
 import web_research
 import agent_runtime
 from fastapi import FastAPI, HTTPException, Query, Header, Response
@@ -27,6 +28,8 @@ UA="EmlakCafeResearch/1.0"
 SEARCH_RADIUS_METERS=1000
 MAX_DETAIL_PAGES=40
 cache={}
+json_inflight={}
+json_refusals={}
 RESEARCH_CONTEXT_TTL=900
 MAX_RESEARCH_CONTEXTS=128
 research_contexts={}
@@ -51,19 +54,74 @@ def num(s):
 async def getjson(client,url,ttl=3600):
     old=cache.get(url)
     if old and time.monotonic()-old[0]<ttl:return old[1]
-    # One bounded retry for transient transport/service failures. Access
-    # restrictions (403/429) and missing parcels (404) are never retried.
-    for attempt in range(2):
-        try:
-            r=await client.get(url);r.raise_for_status();v=r.json();break
-        except httpx.HTTPStatusError as e:
-            if attempt or e.response.status_code not in {408,500,502,503,504}:raise
-        except (httpx.TimeoutException,httpx.NetworkError):
-            if attempt:raise
-        await asyncio.sleep(.25)
-    if len(cache)>3000:cache.clear()
-    cache[url]=(time.monotonic(),v)
-    return v
+    refused=json_refusals.get(url)
+    if refused:
+        if time.monotonic()<refused[0]:
+            request=httpx.Request("GET",url)
+            response=httpx.Response(refused[1],request=request)
+            raise httpx.HTTPStatusError("Kaynağın önceki erişim yanıtı nedeniyle sorgu bekletiliyor.",request=request,response=response)
+        json_refusals.pop(url,None)
+    pending=json_inflight.get(url)
+    if pending is not None:return await asyncio.shield(pending)
+    future=asyncio.get_running_loop().create_future()
+    # Observe exceptions even if no other request is awaiting this shared result.
+    future.add_done_callback(lambda f:None if f.cancelled() else f.exception())
+    json_inflight[url]=future
+    try:
+        # Coalesce identical concurrent requests. Refused operations are never
+        # retried; only transient transport/service failures get one retry.
+        for attempt in range(2):
+            try:
+                r=await client.get(url);r.raise_for_status();v=r.json();break
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in {403,429}:
+                    retry_after=e.response.headers.get("Retry-After","")
+                    seconds=120.0
+                    try:
+                        parsed=float(retry_after)
+                        if math.isfinite(parsed):seconds=max(seconds,parsed)
+                    except ValueError:
+                        try:
+                            from email.utils import parsedate_to_datetime
+                            when=parsedate_to_datetime(retry_after)
+                            if when.tzinfo is None:when=when.replace(tzinfo=timezone.utc)
+                            seconds=max(seconds,(when-datetime.now(timezone.utc)).total_seconds())
+                        except (TypeError,ValueError,OverflowError):pass
+                    now=time.monotonic()
+                    for key,entry in list(json_refusals.items()):
+                        if entry[0]<=now:json_refusals.pop(key,None)
+                    json_refusals[url]=(now+seconds,e.response.status_code)
+                if attempt or e.response.status_code not in {408,500,502,503,504}:raise
+            except (httpx.TimeoutException,httpx.NetworkError):
+                if attempt:raise
+            await asyncio.sleep(.25)
+        if len(cache)>3000:cache.clear()
+        cache[url]=(time.monotonic(),v)
+        future.set_result(v)
+        return v
+    except asyncio.CancelledError:
+        future.set_exception(httpx.RequestError("Paylaşılan kaynak sorgusu tamamlanmadan durdu.",request=httpx.Request("GET",url)))
+        raise
+    except Exception as error:
+        future.set_exception(error)
+        raise
+    finally:
+        json_inflight.pop(url,None)
+
+def tkgm_failure(error):
+    """Expose the actionable source failure without raw URLs/traceback text."""
+    if isinstance(error,httpx.HTTPStatusError):
+        code=error.response.status_code
+        if code in {401,403,429}:
+            message=f"TKGM servisi bu sorguya erişim vermedi (HTTP {code}). Parsel alanı ve 1 km mesafeler doğrulanamadı; bölgesel ilan fiyatları ayrıca değerlendirilebilir."
+            return "blocked",message,code
+        if code==404:return "error","TKGM bu ada/parsel için sonuç döndürmedi. Seçilen yerleşim ve ada/parsel numarasını kontrol edin.",code
+        return "error",f"TKGM servisi kullanılabilir yanıt vermedi (HTTP {code}). Bölgesel ilan araştırması devam eder.",code
+    if isinstance(error,(TimeoutError,httpx.TimeoutException)):
+        return "error","TKGM sorgusu süre içinde yanıtlanmadı. Bölgesel ilan araştırması devam eder.",None
+    if isinstance(error,ValueError):
+        return "error","TKGM yerleşim veya parsel bilgisi tekil olarak doğrulanamadı. Bölgesel ilan araştırması devam eder.",None
+    return "error","TKGM bağlantısı tamamlanamadı. Bölgesel ilan araştırması devam eder.",None
 def client():return httpx.AsyncClient(timeout=httpx.Timeout(10.0),headers={"User-Agent":UA,"Accept":"application/json, text/html;q=0.9"},follow_redirects=False)
 async def all_addresses(c,path):
     rows=[];offset=0
@@ -81,8 +139,10 @@ async def home():return Path(__file__).with_name("index.html").read_text(encodin
 async def research_script():return Response(Path(__file__).with_name("google-research.js").read_text(encoding="utf-8"),media_type="application/javascript")
 @app.get("/agent-ui.js")
 async def agent_script():return Response(Path(__file__).with_name("agent-ui.js").read_text(encoding="utf-8"),media_type="application/javascript")
+@app.get("/regional-ui.js")
+async def regional_script():return Response(Path(__file__).with_name("regional-ui.js").read_text(encoding="utf-8"),media_type="application/javascript")
 @app.get("/health")
-async def health():return {"status":"ok","version":"v10.5","radius_m":SEARCH_RADIUS_METERS,"mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"dated_research":"Akköy","google_research":web_research.config_status(),"agent_runtime":{"engine":"rules_and_tools","agent_count":len(agent_runtime.AGENTS),"running_jobs":agent_jobs.running_jobs}}
+async def health():return {"status":"ok","version":"v10.6","radius_m":SEARCH_RADIUS_METERS,"mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"dated_research":"Akköy","google_research":web_research.config_status(),"agent_runtime":{"engine":"rules_and_tools","agent_count":len(agent_runtime.AGENTS),"running_jobs":agent_jobs.running_jobs}}
 @app.get("/api/provinces")
 async def provinces():return sorted([{"id":i+1,"name":n} for i,n in enumerate(names)],key=lambda x:norm(x["name"]))
 @app.get("/api/districts/{province_id}")
@@ -427,8 +487,9 @@ async def analyze_core(req:Req,progress=None,enable_search=False):
                 except asyncio.CancelledError:
                     report("parcel","error","TKGM sorgusu süre içinde tamamlanamadı.");raise
                 except Exception as e:
-                    warnings.append("TKGM: "+(str(e)[:180] or "Bağlantı zaman aşımı"))
-                    report("parcel","error","TKGM parsel bilgisi doğrulanamadı.")
+                    failure_state,failure_message,failure_code=tkgm_failure(e)
+                    warnings.append(failure_message)
+                    report("parcel",failure_state,failure_message,{"upstream_status":failure_code} if failure_code else {})
                 finally:
                     subject_ready.set()
             async def get_items():
@@ -543,6 +604,7 @@ async def analyze_core(req:Req,progress=None,enable_search=False):
                 report("location","blocked","Hedef parsel doğrulanamadığı için 1 km karşılaştırması yapılamadı.")
         # Prefer independently verified live observations, then dated references.
         # Merge direct URL duplicates before parcel-based deduplication.
+        regional_items=deepcopy(items)
         unique_urls={}
         for i in items:
             if i.get("same_parcel"):continue
@@ -600,13 +662,19 @@ async def analyze_core(req:Req,progress=None,enable_search=False):
         if reference and assumed:warnings.append("Referans fiyat, taşınmazın konut/villa imarlı olduğu varsayımına bağlıdır. Tapu niteliği imar durumunu kanıtlamaz.")
         if any(i.get("observed_on") for i in items):warnings.append("26.11.2026 tarihli web araştırması kayıtları ayrı etiketlidir; canlı ilan aktifliği yeniden doğrulanmış sayılmaz.")
         comparable_count=sum(i["valuation_eligible"] for i in items)
-        report("valuation","complete",f"{comparable_count} uygun emsal değerlendirildi. "+("Fiyat aralığı hesaplandı." if estimate else "Doğrulanmış fiyat aralığı için yeterli koşul sağlanmadı."),{"candidates":len(items),"located":sum(bool(i.get("center")) for i in items),"nearby":len(nearby),"comparable":comparable_count,"conditional_reference":len(reference_near)})
-        print(f"ANALYZE query={req.province}/{req.district}/{req.place}:{req.block}/{req.parcel} radius_m={SEARCH_RADIUS_METERS} subject={bool(subject)} rows={len(items)} nearby={len(nearby)} live={sum(i['live'] for i in items)} strict={len(strict)} reference={bool(reference)}",flush=True)
-        return {"subject":subject,"research_context_id":remember_research_context(req,subject),"items":items,"radius_m":SEARCH_RADIUS_METERS,"source_status":source_status,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"comparable_count":comparable_count,"reference_comparable_count":len(reference_near),"estimate":estimate,"reference_estimate":reference,"search_provider":"Exa" if enable_search else None,"search_status":search_result.get("status"),"search_candidates":search_result.get("candidates",[]),"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"RE/MAX ve Emlakjet için ayrı sayfa okuyucuları. Yalnızca 1 km içindeki konumu doğrulanmış emsaller fiyat aralığına katılır. Mesafe parsel merkezleri arasındadır. Fiyatlar ilan talep fiyatlarıdır; sayfanın erişilebilir olması taşınmazın henüz satılmadığını kanıtlamaz."}
+        regional=regional_analysis.build_regional_analysis(req.model_dump(),subject,regional_items,search_result.get("candidates",[]))
+        regional_groups=[group for group in regional.get("groups",[]) if group.get("unit_q25") is not None]
+        valuation_message=("1 km için doğrulanmış fiyat aralığı hesaplandı." if estimate else "1 km için doğrulanmış fiyat aralığı oluşturulamadı.")
+        if regional_groups:
+            valuation_message+=f" Bölgesel ilan fiyat analizi {sum(group['count'] for group in regional_groups)} kayıtla ayrıca hesaplandı."
+        else:valuation_message+=" Bölgesel fiyat aralığı için de en az üç uygun ilan gereklidir."
+        report("valuation","complete" if estimate or regional_groups else "partial",valuation_message,{"candidates":len(items),"located":sum(bool(i.get("center")) for i in items),"nearby":len(nearby),"comparable":comparable_count,"conditional_reference":len(reference_near),"regional_groups":len(regional_groups)})
+        print(f"ANALYZE query={req.province}/{req.district}/{req.place}:{req.block}/{req.parcel} radius_m={SEARCH_RADIUS_METERS} subject={bool(subject)} rows={len(items)} nearby={len(nearby)} live={sum(i['live'] for i in items)} strict={len(strict)} reference={bool(reference)} regional_groups={len(regional_groups)}",flush=True)
+        return {"subject":subject,"research_context_id":remember_research_context(req,subject),"items":items,"radius_m":SEARCH_RADIUS_METERS,"source_status":source_status,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"comparable_count":comparable_count,"reference_comparable_count":len(reference_near),"estimate":estimate,"reference_estimate":reference,"regional_analysis":regional,"search_provider":"Exa" if enable_search else None,"search_status":search_result.get("status"),"search_candidates":search_result.get("candidates",[]),"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"RE/MAX ve Emlakjet için ayrı sayfa okuyucuları. Doğrulanmış parsel fiyat hesabında 1 km sınırı uygulanır; bölgesel ilan fiyat analizi ise seçilen mahalle/köydeki kaynak beyanlarını kullanır ve 1 km mesafe garantisi vermez. Mesafe parsel merkezleri arasındadır. Fiyatlar ilan talep fiyatlarıdır; sayfanın erişilebilir olması taşınmazın henüz satılmadığını kanıtlamaz."}
 
 @app.get("/api/test/akkoy")
 async def test_akkoy():
-    key="test:akkoy:v10.5"
+    key="test:akkoy:v10.6"
     old=cache.get(key)
     if old and time.monotonic()-old[0]<300:return old[1]
     result=await analyze(Req(province="Yalova",district="Termal",place="Akköy",block="354",parcel="12",zoning="unknown"))

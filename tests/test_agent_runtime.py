@@ -173,8 +173,9 @@ class AgentEndpointTests(unittest.IsolatedAsyncioTestCase):
             job = runtime.start(server.Req(**REQUEST), lambda req, emit: server.analyze_core(req, emit, enable_search=True))
             await runtime.tasks[job["job_id"]]
             snapshot = runtime.snapshot(job["job_id"])
-        self.assertEqual(snapshot["status"], "complete")
-        self.assertEqual(snapshot["completed_agent_count"], 6)
+        self.assertEqual(snapshot["status"], "partial")
+        self.assertEqual(snapshot["completed_agent_count"], 5)
+        self.assertEqual(next(a for a in snapshot["agents"] if a["id"] == "valuation")["status"], "partial")
         search_mock.assert_awaited_once()
         self.assertIn(emlakjet_url, network)
         self.assertIn(remax_url, network)

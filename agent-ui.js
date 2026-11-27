@@ -40,21 +40,22 @@
       const card = document.createElement('article');
       const a = textNode('a', row.title || url.hostname);
       a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer';
-      card.append(a, textNode('p', row.snippet || 'Arama sonucunda açıklama bulunmuyor.', 'agent-snippet'));
+      card.append(a);
       const money = Number.isFinite(row.asking_price) && row.asking_price > 0 ? row.asking_price.toLocaleString('tr-TR') + ' TL' : null;
       const area = Number.isFinite(row.area) && row.area > 0 ? row.area.toLocaleString('tr-TR') + ' m²' : null;
-      if (money || area) card.append(textNode('p', 'Arama kaydındaki bilgi: ' + [money, area].filter(Boolean).join(' · '), 'agent-index-price'));
-      card.append(textNode('small', (row.source || url.hostname) + ' · Arama kaydı · Sayfa, aktiflik ve mesafe doğrulanmadı.'));
-      if (row.price_note) card.append(textNode('p', row.price_note, 'note'));
-      const queries = [...new Set([row.query, ...(Array.isArray(row.queries) ? row.queries : [])].filter(q => typeof q === 'string' && q))];
+      const unit = money && area ? (row.asking_price / row.area).toLocaleString('tr-TR', {maximumFractionDigits: 0}) + ' TL/m²' : null;
+      if (money || area) card.append(textNode('p', [money, area, unit].filter(Boolean).join(' · '), 'agent-index-price'));
       const observed = dateLabel(row.checked_at);
-      if (queries.length || observed) {
-        const details = document.createElement('details');
-        details.append(textNode('summary', 'Arama kanıtı'));
-        if (queries.length) details.append(textNode('p', queries.join('\n'), 'agent-query'));
-        if (observed) details.append(textNode('p', 'Arama zamanı: ' + observed, 'note'));
-        card.append(details);
-      }
+      card.append(textNode('small', (row.source || url.hostname) + (observed ? ' · Arandı: ' + observed : ''), 'agent-source-meta'));
+      card.append(textNode('small', 'Arama kaydı · Sayfa, aktiflik ve mesafe doğrulanmadı.', 'agent-evidence-note'));
+      const queries = [...new Set([row.query, ...(Array.isArray(row.queries) ? row.queries : [])].filter(q => typeof q === 'string' && q))];
+      const details = document.createElement('details');
+      details.className = 'agent-candidate-details';
+      details.append(textNode('summary', 'İlan ayrıntısı ve arama kaydı'));
+      details.append(textNode('p', row.snippet || 'Arama sonucunda açıklama bulunmuyor.', 'agent-snippet'));
+      if (row.price_note) details.append(textNode('p', row.price_note, 'note'));
+      if (queries.length) details.append(textNode('p', queries.join('\n'), 'agent-query'));
+      card.append(details);
       list.append(card);
     }
     el('agent-search-count').textContent = String(count);

@@ -44,9 +44,12 @@ def _configuration():
 
 def config_status():
     """Public readiness only: credentials and their values are never returned."""
-    _, _, model, configured = _configuration()
+    key, access_token, model, configured = _configuration()
     return {
         "configured": configured,
+        "api_key_configured": bool(key),
+        "access_configured": len(access_token) >= 24,
+        "model_valid": bool(_MODEL.fullmatch(model)),
         "provider": PROVIDER,
         "model": model if _MODEL.fullmatch(model) else None,
         "access_required": True,

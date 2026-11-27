@@ -1,5 +1,6 @@
 from __future__ import annotations
-import asyncio, math, re, time, unicodedata, urllib.robotparser
+import asyncio, math, re, secrets, time, unicodedata, urllib.robotparser
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -18,6 +19,9 @@ UA="EmlakCafeResearch/1.0"
 SEARCH_RADIUS_METERS=1000
 MAX_DETAIL_PAGES=40
 cache={}
+RESEARCH_CONTEXT_TTL=900
+MAX_RESEARCH_CONTEXTS=128
+research_contexts={}
 gate=asyncio.Semaphore(2)
 names="Adana|Adıyaman|Afyonkarahisar|Ağrı|Amasya|Ankara|Antalya|Artvin|Aydın|Balıkesir|Bilecik|Bingöl|Bitlis|Bolu|Burdur|Bursa|Çanakkale|Çankırı|Çorum|Denizli|Diyarbakır|Edirne|Elazığ|Erzincan|Erzurum|Eskişehir|Gaziantep|Giresun|Gümüşhane|Hakkâri|Hatay|Isparta|Mersin|İstanbul|İzmir|Kars|Kastamonu|Kayseri|Kırklareli|Kırşehir|Kocaeli|Konya|Kütahya|Malatya|Manisa|Kahramanmaraş|Mardin|Muğla|Muş|Nevşehir|Niğde|Ordu|Rize|Sakarya|Samsun|Siirt|Sinop|Sivas|Tekirdağ|Tokat|Trabzon|Tunceli|Şanlıurfa|Uşak|Van|Yozgat|Zonguldak|Aksaray|Bayburt|Karaman|Kırıkkale|Batman|Şırnak|Bartın|Ardahan|Iğdır|Yalova|Karabük|Kilis|Osmaniye|Düzce".split("|")
 def norm(s):
@@ -67,7 +71,7 @@ async def home():return Path(__file__).with_name("index.html").read_text(encodin
 @app.get("/google-research.js")
 async def research_script():return Response(Path(__file__).with_name("google-research.js").read_text(encoding="utf-8"),media_type="application/javascript")
 @app.get("/health")
-async def health():return {"status":"ok","version":"v10.3","radius_m":SEARCH_RADIUS_METERS,"mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"dated_research":"Akköy","google_research":web_research.config_status()}
+async def health():return {"status":"ok","version":"v10.4","radius_m":SEARCH_RADIUS_METERS,"mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"dated_research":"Akköy","google_research":web_research.config_status()}
 @app.get("/api/provinces")
 async def provinces():return sorted([{"id":i+1,"name":n} for i,n in enumerate(names)],key=lambda x:norm(x["name"]))
 @app.get("/api/districts/{province_id}")
@@ -93,29 +97,61 @@ class Req(BaseModel):
     parcel:str=Field(pattern=r"^[1-9]\d{0,8}$")
     zoning:str=Field(default="unknown",pattern=r"^(unknown|residential|field)$")
 
+class ResearchReq(Req):
+    context_id:str|None=Field(default=None,min_length=20,max_length=96,pattern=r"^[A-Za-z0-9_-]+$")
+
+def research_selection(req):
+    return (norm(req.province),norm(req.district),local(req.place),req.place_kind,int(req.block),int(req.parcel),req.zoning)
+
+def remember_research_context(req,subject):
+    """Hold only trusted TKGM observations, never Google research answers."""
+    if not isinstance(subject,dict):return None
+    now=time.monotonic()
+    for key,entry in list(research_contexts.items()):
+        if now-entry[0]>=RESEARCH_CONTEXT_TTL:research_contexts.pop(key,None)
+    while len(research_contexts)>=MAX_RESEARCH_CONTEXTS:
+        research_contexts.pop(next(iter(research_contexts)))
+    context_id=secrets.token_urlsafe(24)
+    research_contexts[context_id]=(now,research_selection(req),deepcopy(subject))
+    return context_id
+
+def research_context_subject(req):
+    entry=research_contexts.get(req.context_id)
+    if not entry:return None
+    if time.monotonic()-entry[0]>=RESEARCH_CONTEXT_TTL:
+        research_contexts.pop(req.context_id,None)
+        return None
+    if entry[1]!=research_selection(req):return None
+    return deepcopy(entry[2])
+
 @app.get("/api/research/status")
 async def research_status(response:Response):
     response.headers["Cache-Control"]="no-store"
     return web_research.config_status()
 
 @app.post("/api/research")
-async def research_report(req:Req,response:Response,access_code:str|None=Header(default=None,alias="X-Research-Code")):
+async def research_report(req:ResearchReq,response:Response,access_code:str|None=Header(default=None,alias="X-Research-Code")):
     """An on-demand Google report; never an ingestion source for /api/analyze."""
     response.headers["Cache-Control"]="no-store"
-    request=req.model_dump()
+    request=req.model_dump(exclude={"context_id"})
     # Missing configuration or invalid access must not trigger any network call.
     if not web_research.config_status().get("configured") or not web_research.authorized(access_code):
         return await web_research.research(request,access_code=access_code)
-    subject=None
-    try:
-        async def locate_subject():
-            async with client() as c:
-                loc=await locality(c,req)
-                return await parcel_data(c,loc,req.block,req.parcel)
-        subject=await asyncio.wait_for(locate_subject(),12)
-    except (ValueError,httpx.HTTPError,TimeoutError):
-        # A report can still disclose that the exact parcel was not confirmed.
-        pass
+    if req.context_id:
+        subject=research_context_subject(req)
+        if subject is None:
+            return {"provider":web_research.PROVIDER,"status":"invalid_context","message":"Parsel bilgisi değişti veya araştırma süresi doldu. Parseli yeniden sorgulayın.","checked_at":datetime.now(timezone.utc).isoformat(),"text":"","sources":[]}
+    else:
+        subject=None
+        try:
+            async def locate_subject():
+                async with client() as c:
+                    loc=await locality(c,req)
+                    return await parcel_data(c,loc,req.block,req.parcel)
+            subject=await asyncio.wait_for(locate_subject(),12)
+        except (ValueError,httpx.HTTPError,TimeoutError):
+            # A report can still disclose that the exact parcel was not confirmed.
+            pass
     return await web_research.research(request,subject=subject,access_code=access_code)
 def properties(data):
     if isinstance(data,dict) and isinstance(data.get("features"),list):return [x.get("properties",{}) for x in data["features"] if isinstance(x,dict)]
@@ -412,11 +448,11 @@ async def analyze(req:Req):
         if reference and assumed:warnings.append("Referans fiyat, taşınmazın konut/villa imarlı olduğu varsayımına bağlıdır. Tapu niteliği imar durumunu kanıtlamaz.")
         if any(i.get("observed_on") for i in items):warnings.append("26.11.2026 tarihli web araştırması kayıtları ayrı etiketlidir; canlı ilan aktifliği yeniden doğrulanmış sayılmaz.")
         print(f"ANALYZE query={req.province}/{req.district}/{req.place}:{req.block}/{req.parcel} radius_m={SEARCH_RADIUS_METERS} subject={bool(subject)} rows={len(items)} nearby={len(nearby)} live={sum(i['live'] for i in items)} strict={len(strict)} reference={bool(reference)}",flush=True)
-        return {"subject":subject,"items":items,"radius_m":SEARCH_RADIUS_METERS,"source_status":source_status,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"RE/MAX ve Emlakjet için ayrı sayfa okuyucuları. Yalnızca 1 km içindeki konumu doğrulanmış emsaller fiyat aralığına katılır. Mesafe parsel merkezleri arasındadır. Fiyatlar ilan talep fiyatlarıdır; sayfanın erişilebilir olması taşınmazın henüz satılmadığını kanıtlamaz."}
+        return {"subject":subject,"research_context_id":remember_research_context(req,subject),"items":items,"radius_m":SEARCH_RADIUS_METERS,"source_status":source_status,"nearby_count":len(nearby),"live_nearby_count":len(live_nearby),"estimate":estimate,"reference_estimate":reference,"warnings":warnings,"checked_at":datetime.now(timezone.utc).isoformat(),"coverage":"RE/MAX ve Emlakjet için ayrı sayfa okuyucuları. Yalnızca 1 km içindeki konumu doğrulanmış emsaller fiyat aralığına katılır. Mesafe parsel merkezleri arasındadır. Fiyatlar ilan talep fiyatlarıdır; sayfanın erişilebilir olması taşınmazın henüz satılmadığını kanıtlamaz."}
 
 @app.get("/api/test/akkoy")
 async def test_akkoy():
-    key="test:akkoy:v10.3"
+    key="test:akkoy:v10.4"
     old=cache.get(key)
     if old and time.monotonic()-old[0]<300:return old[1]
     result=await analyze(Req(province="Yalova",district="Termal",place="Akköy",block="354",parcel="12",zoning="unknown"))

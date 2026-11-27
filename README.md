@@ -28,9 +28,11 @@ Price ranges use only comparable parcels within 1 km, require at least three obs
 
 The original dated Akköy observations remain explicitly labelled as research from 2026-11-26. They are not silently promoted to current listings.
 
-## Optional Google research report (V10.3)
+## Google research trial (V10.4)
 
-The Google research panel is a separate, explicitly requested report. It uses the
+The Google research panel follows the selected parcel's main analysis. When the
+Google connection and pilot access code are ready, it runs once automatically
+after a successful parcel analysis. It uses the
 Gemini Developer API with `google_search`; it does not automate the Google AI Mode
 website or use a personal Sahibinden session. `/api/analyze`, its readers, TKGM
 matching and the 1,000 metre valuation rules remain independent. Research results
@@ -46,9 +48,19 @@ are never inserted into `items`, the map, or a price-history database.
 
 Both credentials must be configured before research is available. The default
 unconfigured state makes no external request. `GET /api/research/status` reports
-configuration status without returning secret values. `POST /api/research`
-accepts the same property fields as `/api/analyze`, and the access code in the
-`X-Research-Code` header. A configuration check is not a live connectivity test.
+configuration status, including credential-presence booleans, without returning
+secret values. `POST /api/research` accepts the same property fields as
+`/api/analyze`, its optional `research_context_id` as `context_id`, and the access
+code in the `X-Research-Code` header. The short-lived, selection-bound context
+reuses the exact server-held TKGM observation rather than trusting browser-supplied
+area or coordinates. A supplied expired or mismatched context makes no research
+request. A configuration check is not a live connectivity test.
+
+Without a configured Google connection, the UI prepares an ordinary external
+Google search link from the actual TKGM result, including the selected address,
+block/parcel, area, nature, coordinates and the 1 km request. It opens Google in
+a new tab only when the user clicks it. This fallback does not embed Google's
+answer in the app, does not fabricate a report, and is labelled accordingly.
 
 Google Search grounding for this model requires a paid Google project. No project
 is created, billing enabled, key purchased, or provider called by this code change

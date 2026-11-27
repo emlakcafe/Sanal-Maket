@@ -5,7 +5,8 @@ from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 import httpx
 import listing_readers
-from fastapi import FastAPI, HTTPException, Query
+import web_research
+from fastapi import FastAPI, HTTPException, Query, Header, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -63,8 +64,10 @@ async def all_addresses(c,path):
     return [{"id":x["id"],"name":x["name"]} for x in rows if isinstance(x.get("id"),int) and isinstance(x.get("name"),str)]
 @app.get("/",response_class=HTMLResponse)
 async def home():return Path(__file__).with_name("index.html").read_text(encoding="utf-8")
+@app.get("/google-research.js")
+async def research_script():return Response(Path(__file__).with_name("google-research.js").read_text(encoding="utf-8"),media_type="application/javascript")
 @app.get("/health")
-async def health():return {"status":"ok","version":"v10.2","radius_m":SEARCH_RADIUS_METERS,"mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"dated_research":"Akköy"}
+async def health():return {"status":"ok","version":"v10.3","radius_m":SEARCH_RADIUS_METERS,"mode":"isolated-mobile-test","sources":["TurkiyeAPI","TKGM","RE/MAX","Emlakjet"],"dated_research":"Akköy","google_research":web_research.config_status()}
 @app.get("/api/provinces")
 async def provinces():return sorted([{"id":i+1,"name":n} for i,n in enumerate(names)],key=lambda x:norm(x["name"]))
 @app.get("/api/districts/{province_id}")
@@ -89,6 +92,31 @@ class Req(BaseModel):
     block:str=Field(pattern=r"^\d{1,9}$")
     parcel:str=Field(pattern=r"^[1-9]\d{0,8}$")
     zoning:str=Field(default="unknown",pattern=r"^(unknown|residential|field)$")
+
+@app.get("/api/research/status")
+async def research_status(response:Response):
+    response.headers["Cache-Control"]="no-store"
+    return web_research.config_status()
+
+@app.post("/api/research")
+async def research_report(req:Req,response:Response,access_code:str|None=Header(default=None,alias="X-Research-Code")):
+    """An on-demand Google report; never an ingestion source for /api/analyze."""
+    response.headers["Cache-Control"]="no-store"
+    request=req.model_dump()
+    # Missing configuration or invalid access must not trigger any network call.
+    if not web_research.config_status().get("configured") or not web_research.authorized(access_code):
+        return await web_research.research(request,access_code=access_code)
+    subject=None
+    try:
+        async def locate_subject():
+            async with client() as c:
+                loc=await locality(c,req)
+                return await parcel_data(c,loc,req.block,req.parcel)
+        subject=await asyncio.wait_for(locate_subject(),12)
+    except (ValueError,httpx.HTTPError,TimeoutError):
+        # A report can still disclose that the exact parcel was not confirmed.
+        pass
+    return await web_research.research(request,subject=subject,access_code=access_code)
 def properties(data):
     if isinstance(data,dict) and isinstance(data.get("features"),list):return [x.get("properties",{}) for x in data["features"] if isinstance(x,dict)]
     return []
@@ -388,7 +416,7 @@ async def analyze(req:Req):
 
 @app.get("/api/test/akkoy")
 async def test_akkoy():
-    key="test:akkoy:v10.2"
+    key="test:akkoy:v10.3"
     old=cache.get(key)
     if old and time.monotonic()-old[0]<300:return old[1]
     result=await analyze(Req(province="Yalova",district="Termal",place="Akköy",block="354",parcel="12",zoning="unknown"))

@@ -91,7 +91,29 @@ def _money_in_card(text):
     return None
 
 
-def _kind(zoning, category):
+_LAND_ZONING = re.compile(r"\b(?:(?:konut|villa|ticari|ticaret|sanayi|turizm|depolama|ozel kullanim) imarli|imarli (?:konut|villa))\b")
+_LAND_NOUN = re.compile(r"\b(?:arsa|arsasi|arazi|arazisi|tarla|bag|bahce|zeytinlik|meyvelik|fidanlik|mera)\b")
+_BUILDING_NOUN = re.compile(r"\b(?:villa|konut|daire|dairesi|ev|evi|apartman|apart|rezidans|residence|bina|dukkan|isyeri|ofis|otel|depo)\b")
+
+
+def _land_category(category, *, vacant_land=False):
+    """Accept explicit land categories, never a marketing title or cadastral ID."""
+    value = norm(category)
+    if "satilik" not in value.split() or "kiralik" in value.split():
+        return False
+    # A RE/MAX legacy category can say Villa although its own land hierarchy
+    # and labelled vacant-plot field identify the offer as an empty plot.
+    if value in {"satilik villa", "villa satilik"}:
+        return bool(vacant_land)
+    remaining = _LAND_ZONING.sub(" ", value)
+    if _BUILDING_NOUN.search(remaining):
+        return False
+    return bool(_LAND_NOUN.search(value) or _LAND_ZONING.search(value))
+
+
+def _kind(zoning, category, *, vacant_land=False):
+    if not _land_category(category, vacant_land=vacant_land):
+        return "unknown"
     # A later explicit zoning field is stronger than a generic "Satılık Arsa".
     for value in (zoning, category):
         value = norm(value)
@@ -255,11 +277,26 @@ def _valid_address(address, req):
                 and norm(address.get("district")) == norm(_get(req, "district")))
 
 
-def _record(title, url, area, price, category, zoning, address, source, *, fields=None, detail=False, reader="", listing_date=None):
+def _vacant_land_context(soup, nodes, fields, source):
+    if source != "RE/MAX" or norm(_field(fields, "Arsa Durumu")) not in {"bos", "bos arsa"}:
+        return False
+    # Building attributes defeat the legacy "Villa" exception even when an
+    # inconsistent page also contains a vacant-plot label.
+    for label in ("Oda Sayısı", "Banyo Sayısı", "Bina Yaşı", "Bulunduğu Kat", "Kat Sayısı"):
+        value = norm(_field(fields, label))
+        if value and value not in {"bilinmiyor", "belirtilmemis", "yok", "bos"}:
+            return False
+    hierarchy = _remax_address(soup, nodes)
+    return bool(hierarchy["province"] and hierarchy["district"])
+
+
+def _record(title, url, area, price, category, zoning, address, source, *, fields=None, detail=False, reader="", listing_date=None, vacant_land=False):
     if not title or not area or not price or area <= 0 or price <= 0:
         return None
+    if not _land_category(category, vacant_land=vacant_land):
+        return None
     fields = fields or {}
-    kind = _kind(zoning, category)
+    kind = _kind(zoning, category, vacant_land=vacant_land)
     ownership = _field(fields, "Tapu Durumu")
     share_evidence = []
     if re.search(r"\b(?:hisseli|hisse|musterek|payli|istirak)\b", norm(ownership)):
@@ -277,7 +314,8 @@ def _record(title, url, area, price, category, zoning, address, source, *, field
             "detail_status": "read" if detail else "not_checked",
             "address": address, "reader": reader, "listing_date": listing_date,
             "share_sale": bool(share_evidence), "share_evidence": share_evidence,
-            "field_evidence": {"category": category, "zoning": zoning, "ownership": ownership}}
+            "field_evidence": {"category": category, "zoning": zoning, "ownership": ownership,
+                               "vacant_land": bool(vacant_land)}}
 
 
 def parse_detail(html, url, req, source):
@@ -339,9 +377,19 @@ def parse_detail(html, url, req, source):
     area = area or _number(_field(fields, "Metrekare", "m²", "Alan", "Metrekare (m²)"))
     category = _field(fields, "Kategori", "Emlak Tipi", "İlan Tipi")
     zoning = _field(fields, "İmar Durumu", "Arsa Tipi")
-    if "satilik" not in norm(category):
+    vacant_land = _vacant_land_context(soup, nodes, fields, source)
+    if vacant_land:
+        hierarchy = _remax_address(soup, nodes)
+        vacant_land = (norm(hierarchy["province"]) == norm(_get(req, "province"))
+                       and norm(hierarchy["district"]) == norm(_get(req, "district")))
+    if not _land_category(category, vacant_land=vacant_land):
         return None
-
+    # Do not let stale structured land data overwrite an explicit DOM building
+    # category, or vice versa. Missing/generic fields alone are not evidence.
+    for evidence in (dom, structured_fields):
+        declared = _field(evidence, "Kategori", "Emlak Tipi", "İlan Tipi")
+        if declared and _BUILDING_NOUN.search(_LAND_ZONING.sub(" ", norm(declared))) and not _land_category(declared, vacant_land=vacant_land):
+            return None
     address = _remax_address(soup, nodes) if source == "RE/MAX" else _emlakjet_dom_address(soup)
     structured_address = listing.get("address") or offered.get("address") or {}
     if isinstance(structured_address, dict):
@@ -359,7 +407,7 @@ def parse_detail(html, url, req, source):
         return None
     date = listing.get("dateModified") or listing.get("datePosted") or _field(fields, "İlan Güncelleme Tarihi", "Yayınlanma Tarihi") or None
     row = _record(title, target, area, price, category, zoning, address, source, fields=fields, detail=True,
-                  reader=("remax" if source == "RE/MAX" else "emlakjet") + ("-jsonld-dom" if matched else "-labelled-dom"), listing_date=date)
+                  reader=("remax" if source == "RE/MAX" else "emlakjet") + ("-jsonld-dom" if matched else "-labelled-dom"), listing_date=date, vacant_land=vacant_land)
     geo = listing.get("geo") or offered.get("geo") or {}
     if row and isinstance(geo, dict):
         lat, lon = _number(geo.get("latitude")), _number(geo.get("longitude"))
@@ -390,6 +438,21 @@ def detail_problem(html, url, source):
         for offer in offers if isinstance(offers, list) else [offers]:
             if isinstance(offer, dict) and str(offer.get("availability", "")).rsplit("/", 1)[-1].lower() in {"outofstock", "soldout", "discontinued"}:
                 return "Kaynak ilanı yayından kaldırılmış veya satılmış olarak işaretliyor"
+    dom = _dom_fields(soup, source)
+    fields = dict(dom)
+    categories = [_field(dom, "Kategori", "Emlak Tipi", "İlan Tipi")]
+    for node in matched:
+        values = _properties(node.get("itemOffered"))
+        values.update(_properties(node))
+        fields.update(values)
+        categories.append(_field(values, "Kategori", "Emlak Tipi", "İlan Tipi"))
+    vacant_land = _vacant_land_context(soup, _json_nodes(soup), fields, source)
+    for category in filter(None, categories):
+        if _BUILDING_NOUN.search(_LAND_ZONING.sub(" ", norm(category))) and not _land_category(category, vacant_land=vacant_land):
+            return "Kaynak kategorisi konut/bina ilanı; arsa veya arazi emsali olarak okunmadı"
+    category = _field(fields, "Kategori", "Emlak Tipi", "İlan Tipi")
+    if category and not _land_category(category, vacant_land=vacant_land):
+        return "Kaynakta satılık arsa/arazi kategorisi doğrulanamadı"
     return generic
 
 
@@ -521,3 +584,4 @@ def search_urls(req, source):
         else:
             variants.extend([place + "-koyu", place + "-mahallesi", place])
     return list(dict.fromkeys([base + "-" + value for value in variants] + [base]))
+
